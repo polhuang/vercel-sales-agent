@@ -4,6 +4,14 @@ import { FieldUpdate } from '../../types/opportunity.js';
 
 export class StageGateValidator {
   /**
+   * Normalize stage name by removing numeric prefixes like "0 - "
+   */
+  private normalizeStage(stage: string): string {
+    // Remove patterns like "0 - ", "1 - ", etc.
+    return stage.replace(/^\d+\s*-\s*/, '').trim();
+  }
+
+  /**
    * Validate a stage transition
    */
   validateStageTransition(
@@ -12,13 +20,17 @@ export class StageGateValidator {
     currentFields: Record<string, any>,
     proposedUpdates: FieldUpdate[]
   ): ValidationResult {
-    const rule = getStageGateRule(fromStage, toStage);
+    // Normalize stage names
+    const normalizedFrom = this.normalizeStage(fromStage);
+    const normalizedTo = this.normalizeStage(toStage);
+
+    const rule = getStageGateRule(normalizedFrom, normalizedTo);
 
     if (!rule) {
       return {
         isValid: true,
         missingFields: [],
-        warnings: [`No stage-gate rule defined for ${fromStage} → ${toStage}`],
+        warnings: [`No stage-gate rule defined for ${normalizedFrom} → ${normalizedTo}`],
       };
     }
 
@@ -55,8 +67,19 @@ export class StageGateValidator {
    * Get all required fields for a specific stage transition
    */
   getRequiredFields(fromStage: string, toStage: string): string[] {
-    const rule = getStageGateRule(fromStage, toStage);
+    const normalizedFrom = this.normalizeStage(fromStage);
+    const normalizedTo = this.normalizeStage(toStage);
+    const rule = getStageGateRule(normalizedFrom, normalizedTo);
     return rule ? rule.requiredFields.map(f => f.displayName) : [];
+  }
+
+  /**
+   * Get the stage gate rule for a specific transition
+   */
+  getStageGateRule(fromStage: string, toStage: string) {
+    const normalizedFrom = this.normalizeStage(fromStage);
+    const normalizedTo = this.normalizeStage(toStage);
+    return getStageGateRule(normalizedFrom, normalizedTo);
   }
 
   /**

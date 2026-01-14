@@ -18,6 +18,7 @@ import { logger } from './utils/logger.js';
 import { IntentInput } from './components/IntentInput.js';
 import { NotesInput } from './components/NotesInput.js';
 import { OpportunitySelector } from './components/OpportunitySelector.js';
+import { MissingFieldsInput } from './components/MissingFieldsInput.js';
 
 type Screen =
   | 'welcome'
@@ -30,6 +31,7 @@ type Screen =
   | 'loading-opp'
   | 'processing'
   | 'preview'
+  | 'missing-fields'
   | 'updating'
   | 'success'
   | 'error';
@@ -62,6 +64,11 @@ export default function App({ apiKey }: AppProps) {
   const [oppState, setOppState] = useState<OpportunityState | null>(null);
   const [notes, setNotes] = useState<string>('');
   const [extraction, setExtraction] = useState<ClaudeExtraction | null>(null);
+  const [missingFieldDetails, setMissingFieldDetails] = useState<Array<{
+    apiName: string;
+    displayName: string;
+    description: string;
+  }>>([]);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -71,6 +78,11 @@ export default function App({ apiKey }: AppProps) {
     } else if (screen === 'authenticated') {
       // Any key moves to intent input
       setScreen('intent-input');
+    } else if (screen === 'preview' && !extraction?.missingFields?.length) {
+      // On preview screen with no missing fields, Enter to apply updates
+      if (key.return) {
+        handleApplyUpdates();
+      }
     } else if (key.escape || (key.ctrl && input === 'c')) {
       // Ctrl+C or ESC to exit
       process.exit(0);
@@ -166,6 +178,105 @@ export default function App({ apiKey }: AppProps) {
     }
   };
 
+  // Handle applying updates to Salesforce
+  const handleApplyUpdates = async () => {
+    if (!extraction || !oppState) return;
+
+    setScreen('updating');
+    setMessage('Applying updates to Salesforce...');
+
+    try {
+      logger.info('Applying field updates', {
+        fieldCount: extraction.fieldUpdates.length,
+        hasStageChange: !!extraction.stageChange
+      });
+
+      // Update all fields
+      if (extraction.fieldUpdates.length > 0) {
+        logger.info('Updating fields in Salesforce', {
+          fields: extraction.fieldUpdates.map(u => u.field)
+        });
+        await updater.updateFields(extraction.fieldUpdates);
+      }
+
+      // Update stage if changed
+      if (extraction.stageChange) {
+        logger.info('Updating stage', {
+          from: extraction.stageChange.from,
+          to: extraction.stageChange.to
+        });
+        await updater.updateStage(extraction.stageChange.to);
+      }
+
+      // Save all changes
+      logger.info('Saving changes to Salesforce');
+      await updater.saveChanges();
+
+      // Wait a moment for save to complete
+      await browser.wait(2000);
+
+      logger.info('Updates applied successfully');
+      setMessage('✅ Successfully updated opportunity!');
+      setScreen('success');
+
+      // Auto-exit after success
+      setTimeout(() => {
+        process.exit(0);
+      }, 3000);
+    } catch (error: any) {
+      logger.error('Failed to apply updates', error);
+      setError(error.message || 'Failed to apply updates to Salesforce');
+      setScreen('error');
+    }
+  };
+
+  // Handle missing fields submission
+  const handleMissingFieldsSubmit = (fieldValues: Record<string, string>) => {
+    if (!extraction || !oppState) return;
+
+    logger.info('Missing fields provided by user', {
+      fieldCount: Object.keys(fieldValues).length,
+      fields: Object.keys(fieldValues)
+    });
+
+    // Add the user-provided fields to the extraction
+    const newFieldUpdates = Object.entries(fieldValues).map(([apiName, value]) => {
+      const fieldDetail = missingFieldDetails.find(f => f.apiName === apiName);
+      return {
+        field: apiName,
+        value: value,
+        confidence: 'high' as const,
+        source: 'User provided during stage transition'
+      };
+    });
+
+    const updatedExtraction = {
+      ...extraction,
+      fieldUpdates: [...extraction.fieldUpdates, ...newFieldUpdates]
+    };
+
+    // Re-validate with the new fields
+    if (updatedExtraction.stageChange) {
+      const validationResult = validator.validateStageTransition(
+        updatedExtraction.stageChange.from,
+        updatedExtraction.stageChange.to,
+        oppState.fields,
+        updatedExtraction.fieldUpdates
+      );
+
+      logger.info('Re-validation after user input', {
+        isValid: validationResult.isValid,
+        missingFieldsCount: validationResult.missingFields.length
+      });
+
+      // Update missing fields list
+      updatedExtraction.missingFields = validationResult.missingFields;
+    }
+
+    setExtraction(updatedExtraction);
+    setScreen('preview');
+  };
+
   // Handle loading a specific opportunity
   const handleOpportunityLoad = async (opp: OpportunitySearchResult, parsedIntent: ParsedIntent) => {
     setScreen('loading-opp');
@@ -188,6 +299,26 @@ export default function App({ apiKey }: AppProps) {
       });
 
       setOppState(currentState);
+
+      // If stage is Unknown, we can't proceed (but name being Unknown is okay)
+      if (currentState.stage === 'Unknown') {
+        logger.warn('Failed to extract opportunity stage from page', {
+          stage: currentState.stage,
+          name: currentState.name,
+          id: currentState.id
+        });
+        setError('Could not automatically detect the opportunity stage from the Salesforce page. Please check that the Stage field is visible in the browser, then try again.');
+        setScreen('error');
+        return;
+      }
+
+      // Log if name is Unknown but proceed anyway
+      if (currentState.name === 'Unknown') {
+        logger.info('Opportunity name not extracted but stage found - proceeding', {
+          stage: currentState.stage,
+          id: currentState.id
+        });
+      }
 
       // Now process the intent
       const hasInformation = parsedIntent.information && parsedIntent.information.trim().length > 0;
@@ -255,6 +386,24 @@ export default function App({ apiKey }: AppProps) {
               ...validationResult.missingFields
             ]);
             claudeExtraction.missingFields = Array.from(allMissingFields);
+
+            // Get the full field details for the missing fields
+            const stageGateRule = validator.getStageGateRule(
+              claudeExtraction.stageChange.from,
+              claudeExtraction.stageChange.to
+            );
+
+            if (stageGateRule) {
+              const missingFieldObjects = stageGateRule.requiredFields.filter(field =>
+                validationResult.missingFields.includes(field.displayName)
+              );
+              setMissingFieldDetails(missingFieldObjects);
+
+              // Show missing fields input screen instead of preview
+              setExtraction(claudeExtraction);
+              setScreen('missing-fields');
+              return;
+            }
           }
         }
 
@@ -400,6 +549,19 @@ export default function App({ apiKey }: AppProps) {
     );
   }
 
+  if (screen === 'missing-fields' && missingFieldDetails.length > 0) {
+    return (
+      <MissingFieldsInput
+        missingFields={missingFieldDetails}
+        onSubmit={handleMissingFieldsSubmit}
+        onCancel={() => {
+          setScreen('error');
+          setError('Stage transition cancelled - missing required fields');
+        }}
+      />
+    );
+  }
+
   if (screen === 'preview' && extraction && oppState) {
     const hasValidationIssues = extraction.missingFields.length > 0;
 
@@ -466,7 +628,7 @@ export default function App({ apiKey }: AppProps) {
           <Text dimColor>
             {hasValidationIssues
               ? 'Update blocked - resolve missing fields first. Press Ctrl+C to exit'
-              : 'Implementation coming soon: Press Ctrl+C to exit'}
+              : 'Press Enter to apply these changes to Salesforce, or Ctrl+C to cancel'}
           </Text>
         </Box>
       </Box>

@@ -143,6 +143,6 @@ export class SearchService {
    */
   async clickOpportunity(ref: string): Promise<void> {
     await this.browser.clickElement(`@${ref}`);
-    await this.browser.wait(3000); // Wait for page load
+    await this.browser.wait(5000); // Wait longer for page to fully load
   }
 }
