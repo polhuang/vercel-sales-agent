@@ -17,12 +17,7 @@ export const STAGE_GATES: StageGateRule[] = [
     toStage: 'Qualification',
     requiredFields: [
       { apiName: 'Amount', displayName: 'Amount', description: 'Deal size estimate' },
-      { apiName: 'SQO_Date__c', displayName: 'SQO', description: 'Sales Qualified Opportunity date' },
-      { apiName: 'Prospector__c', displayName: 'Prospector', description: 'Who prospected this opportunity' },
-      { apiName: 'SDR__c', displayName: 'SDR', description: 'Sales Development Rep assigned' },
-      { apiName: 'CloseDate', displayName: 'Close Date', description: 'Expected close date' },
-      { apiName: 'New_Business_vs_Expansion__c', displayName: 'New Biz/Expansion', description: 'Type of opportunity' },
-      { apiName: 'Primary_Product_Interest__c', displayName: 'Primary Product Interest', description: 'Main product customer is interested in' },
+      { apiName: 'Primary_Contact__c', displayName: 'Primary Contact', description: 'Primary contact for this opportunity' },
     ],
   },
   {

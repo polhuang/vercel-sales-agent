@@ -45,12 +45,12 @@ export default function App({ apiKey }: AppProps) {
 
   // Services
   const [browser] = useState(() => new AgentBrowserService('default', true)); // headful mode
+  const [claude] = useState(() => new ClaudeClient(apiKey));
   const [auth] = useState(() => new AuthService(browser));
   const [nav] = useState(() => new NavigationService(browser));
-  const [extractor] = useState(() => new FieldExtractorService(browser));
+  const [extractor] = useState(() => new FieldExtractorService(browser, claude));
   const [updater] = useState(() => new FieldUpdaterService(browser));
   const [search] = useState(() => new SearchService(browser));
-  const [claude] = useState(() => new ClaudeClient(apiKey));
   const [parser] = useState(() => new ParserService(claude));
   const [intentParser] = useState(() => new IntentParserService(claude));
   const [validator] = useState(() => new StageGateValidator());
