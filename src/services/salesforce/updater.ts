@@ -1,5 +1,6 @@
 import { AgentBrowserService } from './browser.js';
 import { FieldUpdate } from '../../types/opportunity.js';
+import { logger } from '../../utils/logger.js';
 
 export class FieldUpdaterService {
   private browser: AgentBrowserService;
@@ -9,9 +10,56 @@ export class FieldUpdaterService {
   }
 
   /**
+   * Save changes by clicking the Save button
+   */
+  async saveChanges(): Promise<void> {
+    const snapshot = await this.browser.getSnapshot();
+
+    // Find Save button
+    for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+      const name = element.name?.toString().toLowerCase() || '';
+      const role = element.role?.toString() || '';
+
+      if (role === 'button' && name === 'save') {
+        logger.info('Clicking Save button');
+        await this.browser.clickElement(`@${ref}`);
+        await this.browser.wait(2000); // Wait for save to complete
+        return;
+      }
+    }
+
+    logger.warn('Save button not found - changes may not be saved');
+  }
+
+  /**
+   * Ensure we're in edit mode by clicking the Edit button if needed
+   */
+  async ensureEditMode(): Promise<void> {
+    const snapshot = await this.browser.getSnapshot();
+
+    // Look for Edit button
+    for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+      const name = element.name?.toString().toLowerCase() || '';
+      const role = element.role?.toString() || '';
+
+      if (role === 'button' && name === 'edit') {
+        logger.info('Clicking Edit button to enter edit mode');
+        await this.browser.clickElement(`@${ref}`);
+        await this.browser.wait(3000); // Wait longer for edit mode to fully activate
+        return;
+      }
+    }
+
+    logger.info('Edit button not found - assuming already in edit mode');
+  }
+
+  /**
    * Update multiple fields in Salesforce
    */
   async updateFields(fieldUpdates: FieldUpdate[]): Promise<void> {
+    // Ensure we're in edit mode first
+    await this.ensureEditMode();
+
     for (const update of fieldUpdates) {
       await this.updateField(update.field, update.value);
       await this.browser.wait(500); // Small delay between updates
@@ -22,52 +70,187 @@ export class FieldUpdaterService {
    * Update a single field
    */
   async updateField(fieldName: string, value: any): Promise<void> {
-    const snapshot = await this.browser.getSnapshot();
+    logger.info('Attempting to update field', { fieldName, value });
 
-    // Find the field by name
-    let fieldRef: string | null = null;
-    let fieldType: string | null = null;
+    // Map API field names to user-friendly names that appear in Salesforce UI
+    const fieldDisplayNames: Record<string, string[]> = {
+      'Amount': ['amount', 'opportunity amount', 'deal amount', 'deal size', 'deal value', 'price', 'value', 'opp amount', '$'],
+      'Primary_Contact__c': ['primary contact', 'contact', 'primary', 'main contact'],
+      'CloseDate': ['close date', 'expected close', 'close', 'closing date'],
+      'Champion__c': ['champion'],
+      'NextStep': ['next step', 'next steps'],
+      'Implicated_Pain__c': ['implicated pain', 'pain'],
+    };
 
-    for (const [ref, element] of Object.entries(snapshot.data.refs)) {
-      // Match by field name (case-insensitive)
-      if (element.name?.toLowerCase().includes(fieldName.toLowerCase())) {
-        fieldRef = ref;
-        fieldType = element.role;
-        break;
+    const possibleNames = fieldDisplayNames[fieldName] || [fieldName.toLowerCase().replace(/__c$/, '').replace(/_/g, ' ')];
+
+    // Try multiple times to find and update the field
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        logger.info(`Retry attempt ${attempt + 1} for field ${fieldName}`);
+
+        // On retry, try scrolling down to reveal more fields
+        if (attempt === 1) {
+          logger.info('Scrolling down to reveal more fields');
+          await this.browser.exec('scroll', ['down', '500']);
+          await this.browser.wait(2000); // Wait longer after scrolling
+        } else {
+          await this.browser.wait(1000);
+        }
+      }
+
+      // Get fresh snapshot
+      const snapshot = await this.browser.getSnapshot();
+
+      // Find the field by name with multiple matching strategies
+      let fieldRef: string | null = null;
+      let fieldType: string | null = null;
+
+      // First pass: log all input fields for debugging
+      if (attempt === 0) {
+        logger.debug(`Looking for field "${fieldName}", trying names: ${possibleNames.join(', ')}`);
+        const inputFields: Array<{ name: string; role: string; ref: string }> = [];
+        for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+          const role = element.role?.toString() || '';
+          if (['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+            inputFields.push({
+              name: element.name?.toString() || 'unnamed',
+              role,
+              ref
+            });
+          }
+        }
+        logger.debug(`Total input fields found: ${inputFields.length}`, {
+          firstTenFields: inputFields.slice(0, 10).map(f => `${f.name} (${f.role})`)
+        });
+      }
+
+      for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+        const elementName = element.name?.toString().toLowerCase() || '';
+        const role = element.role?.toString() || '';
+
+        // Skip non-input elements
+        if (!['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+          continue;
+        }
+
+        // Try matching against possible names (more flexible matching)
+        for (const possibleName of possibleNames) {
+          let matched = false;
+
+          // Try exact contains
+          if (elementName.includes(possibleName)) {
+            fieldRef = ref;
+            fieldType = role;
+            matched = true;
+            logger.info('Found field element (exact match)', {
+              fieldName,
+              searchTerm: possibleName,
+              elementName: element.name,
+              role,
+              ref
+            });
+            break;
+          }
+
+          // Try partial word match (e.g., "amount" matches "Amount*")
+          const words = elementName.split(/[\s\-_*()]+/);
+          if (words.some(word => word === possibleName || word.startsWith(possibleName))) {
+            fieldRef = ref;
+            fieldType = role;
+            matched = true;
+            logger.info('Found field element (word match)', {
+              fieldName,
+              searchTerm: possibleName,
+              elementName: element.name,
+              role,
+              ref,
+              words: words.slice(0, 5)
+            });
+            break;
+          }
+
+          // Try matching without special characters
+          const cleanElementName = elementName.replace(/[^a-z0-9\s]/g, '');
+          const cleanPossibleName = possibleName.replace(/[^a-z0-9\s]/g, '');
+          if (cleanElementName.includes(cleanPossibleName)) {
+            fieldRef = ref;
+            fieldType = role;
+            matched = true;
+            logger.info('Found field element (clean match)', {
+              fieldName,
+              searchTerm: possibleName,
+              elementName: element.name,
+              cleanElementName,
+              cleanPossibleName,
+              role,
+              ref
+            });
+            break;
+          }
+        }
+
+        if (fieldRef) break;
+      }
+
+      if (!fieldRef) {
+        // Log all input fields we can see for debugging
+        const availableFields: string[] = [];
+        for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+          const role = element.role?.toString() || '';
+          if (['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+            availableFields.push(element.name?.toString() || 'unnamed');
+          }
+        }
+
+        logger.warn(`Field not found on attempt ${attempt + 1}: ${fieldName}`, {
+          possibleNames,
+          totalElements: Object.keys(snapshot.data.refs).length,
+          availableFields: availableFields.slice(0, 20) // Log first 20 fields
+        });
+        continue;
+      }
+
+      // Update based on field type
+      try {
+        switch (fieldType) {
+          case 'textbox':
+          case 'searchbox':
+            await this.browser.fillField(`@${fieldRef}`, value.toString());
+            logger.info('Successfully filled field', { fieldName, value });
+            return;
+
+          case 'combobox':
+            // For picklists, need to click and select
+            await this.browser.clickElement(`@${fieldRef}`);
+            await this.browser.wait(500);
+            await this.browser.fillField(`@${fieldRef}`, value.toString());
+            logger.info('Successfully set combobox field', { fieldName, value });
+            return;
+
+          case 'checkbox':
+            // For checkboxes, click if value is true
+            if (value === true || value === 'true') {
+              await this.browser.clickElement(`@${fieldRef}`);
+              logger.info('Successfully checked checkbox', { fieldName });
+            }
+            return;
+
+          default:
+            await this.browser.fillField(`@${fieldRef}`, value.toString());
+            logger.info('Successfully filled field (default)', { fieldName, value });
+            return;
+        }
+      } catch (error: any) {
+        logger.warn(`Failed to update field on attempt ${attempt + 1}`, {
+          fieldName,
+          error: error.message
+        });
       }
     }
 
-    if (!fieldRef) {
-      console.warn(`Field not found: ${fieldName}`);
-      return;
-    }
-
-    // Update based on field type
-    switch (fieldType) {
-      case 'textbox':
-      case 'searchbox':
-        await this.browser.fillField(`@${fieldRef}`, value.toString());
-        break;
-
-      case 'combobox':
-        // For picklists, need to click and select
-        await this.browser.clickElement(`@${fieldRef}`);
-        await this.browser.wait(500);
-        // Try to select by value
-        await this.browser.fillField(`@${fieldRef}`, value.toString());
-        break;
-
-      case 'checkbox':
-        // For checkboxes, click if value is true
-        if (value === true || value === 'true') {
-          await this.browser.clickElement(`@${fieldRef}`);
-        }
-        break;
-
-      default:
-        // Default to fill
-        await this.browser.fillField(`@${fieldRef}`, value.toString());
-    }
+    logger.error(`Could not update field after all attempts: ${fieldName}`);
+    throw new Error(`Could not find or update field: ${fieldName}`);
   }
 
   /**
@@ -76,23 +259,48 @@ export class FieldUpdaterService {
   async updateStage(newStage: string): Promise<void> {
     const snapshot = await this.browser.getSnapshot();
 
-    // Find stage picker
-    for (const [ref, element] of Object.entries(snapshot.data.refs)) {
-      if (element.name?.toLowerCase().includes('stage')) {
-        await this.browser.clickElement(`@${ref}`);
-        await this.browser.wait(500);
+    // Normalize stage name - remove numeric prefixes
+    const normalizedStage = newStage.replace(/^\d+\s*-\s*/, '').trim();
 
-        // Find the stage option
-        const updatedSnapshot = await this.browser.getSnapshot();
-        for (const [optionRef, optionElement] of Object.entries(updatedSnapshot.data.refs)) {
-          if (optionElement.name === newStage) {
-            await this.browser.clickElement(`@${optionRef}`);
-            return;
-          }
-        }
+    // Find stage picker (button or combobox)
+    let stageRef: string | null = null;
+    for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+      const name = element.name?.toString().toLowerCase() || '';
+      const role = element.role?.toString() || '';
+
+      // Look for stage field/button
+      if ((role === 'button' || role === 'combobox') &&
+          (name.includes('stage') || name.includes('0 -') || name.includes('1 -'))) {
+        stageRef = ref;
+        break;
       }
     }
 
-    throw new Error(`Could not update stage to: ${newStage}`);
+    if (!stageRef) {
+      throw new Error('Could not find stage field');
+    }
+
+    // Click the stage picker
+    await this.browser.clickElement(`@${stageRef}`);
+    await this.browser.wait(1000);
+
+    // Find the stage option in the dropdown
+    const updatedSnapshot = await this.browser.getSnapshot();
+    for (const [optionRef, optionElement] of Object.entries(updatedSnapshot.data.refs)) {
+      const optionName = optionElement.name?.toString() || '';
+      const optionRole = optionElement.role?.toString() || '';
+
+      // Match by normalized name
+      const normalizedOption = optionName.replace(/^\d+\s*-\s*/, '').trim();
+
+      if ((optionRole === 'option' || optionRole === 'menuitem') &&
+          normalizedOption.toLowerCase() === normalizedStage.toLowerCase()) {
+        await this.browser.clickElement(`@${optionRef}`);
+        await this.browser.wait(500);
+        return;
+      }
+    }
+
+    throw new Error(`Could not find stage option: ${normalizedStage} in dropdown`);
   }
 }
