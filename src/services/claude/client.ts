@@ -49,14 +49,16 @@ export class ClaudeClient {
     let jsonText = response.trim();
 
     // Remove markdown code blocks if present
-    if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    if (jsonText.startsWith('```json')) {
+      jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
 
     try {
-      return JSON.parse(jsonText);
+      return JSON.parse(jsonText.trim());
     } catch (error) {
-      console.error('Failed to parse Claude response as JSON:', jsonText);
+      console.error('Failed to parse Claude response as JSON:', jsonText.substring(0, 200));
       throw new Error('Claude response was not valid JSON');
     }
   }
