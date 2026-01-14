@@ -50,6 +50,7 @@ console.log(JSON.stringify(cookies, null, 2));
 # Paste contents of scripts/extract-salesforce-cookies.js
 ```
 
+
 ### Option C: Manual (DevTools)
 
 1. F12 → Application → Cookies → https://vercel.my.salesforce.com
