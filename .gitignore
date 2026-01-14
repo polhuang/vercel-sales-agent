@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+vercel-sales-agent.log
+
+# Debug screenshots
+debug/
+
+# OS files
+.DS_Store
+
+# Claude Code config (may contain local paths)
+.claude.json
