@@ -121,7 +121,7 @@ export class FieldUpdaterService {
           }
         }
         logger.debug(`Total input fields found: ${inputFields.length}`, {
-          firstTenFields: inputFields.slice(0, 10).map(f => `${f.name} (${f.role})`)
+          first30Fields: inputFields.slice(0, 30).map(f => `${f.name} (${f.role})`)
         });
       }
 
@@ -170,10 +170,10 @@ export class FieldUpdaterService {
             break;
           }
 
-          // Try matching without special characters
+          // Try matching without special characters (skip if search term becomes empty)
           const cleanElementName = elementName.replace(/[^a-z0-9\s]/g, '');
           const cleanPossibleName = possibleName.replace(/[^a-z0-9\s]/g, '');
-          if (cleanElementName.includes(cleanPossibleName)) {
+          if (cleanPossibleName.trim().length > 0 && cleanElementName.includes(cleanPossibleName)) {
             fieldRef = ref;
             fieldType = role;
             matched = true;
@@ -206,7 +206,8 @@ export class FieldUpdaterService {
         logger.warn(`Field not found on attempt ${attempt + 1}: ${fieldName}`, {
           possibleNames,
           totalElements: Object.keys(snapshot.data.refs).length,
-          availableFields: availableFields.slice(0, 20) // Log first 20 fields
+          totalInputFields: availableFields.length,
+          allFields: availableFields // Log ALL fields to help debug
         });
         continue;
       }
