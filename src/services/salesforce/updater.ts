@@ -283,11 +283,30 @@ export class FieldUpdaterService {
     }
 
     // Click the stage picker
+    logger.info('Clicking stage picker', { stageRef, normalizedStage });
     await this.browser.clickElement(`@${stageRef}`);
-    await this.browser.wait(1000);
+    await this.browser.wait(2000); // Wait longer for dropdown to appear
 
     // Find the stage option in the dropdown
     const updatedSnapshot = await this.browser.getSnapshot();
+
+    // Log all available options for debugging
+    const availableOptions: Array<{ name: string; role: string; normalized: string }> = [];
+    for (const [ref, element] of Object.entries(updatedSnapshot.data.refs)) {
+      const role = element.role?.toString() || '';
+      if (role === 'option' || role === 'menuitem') {
+        const name = element.name?.toString() || '';
+        const normalized = name.replace(/^\d+\s*-\s*/, '').trim();
+        availableOptions.push({ name, role, normalized });
+      }
+    }
+
+    logger.debug('Available stage options in dropdown', {
+      totalOptions: availableOptions.length,
+      options: availableOptions.slice(0, 10),
+      lookingFor: normalizedStage
+    });
+
     for (const [optionRef, optionElement] of Object.entries(updatedSnapshot.data.refs)) {
       const optionName = optionElement.name?.toString() || '';
       const optionRole = optionElement.role?.toString() || '';
@@ -297,12 +316,17 @@ export class FieldUpdaterService {
 
       if ((optionRole === 'option' || optionRole === 'menuitem') &&
           normalizedOption.toLowerCase() === normalizedStage.toLowerCase()) {
+        logger.info('Found matching stage option', { optionName, normalizedOption, optionRef });
         await this.browser.clickElement(`@${optionRef}`);
         await this.browser.wait(500);
         return;
       }
     }
 
+    logger.error('Could not find stage option', {
+      lookingFor: normalizedStage,
+      availableOptions: availableOptions.map(o => o.name)
+    });
     throw new Error(`Could not find stage option: ${normalizedStage} in dropdown`);
   }
 }
