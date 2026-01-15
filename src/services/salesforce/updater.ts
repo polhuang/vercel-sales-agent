@@ -76,6 +76,7 @@ export class FieldUpdaterService {
     const fieldDisplayNames: Record<string, string[]> = {
       'Amount': ['amount'],
       'Primary_Contact__c': ['primary contact'],
+      'Prospector__c': ['prospector'],
       'CloseDate': ['close date'],
       'Champion__c': ['champion'],
       'NextStep': ['next step'],

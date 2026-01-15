@@ -18,6 +18,7 @@ export const STAGE_GATES: StageGateRule[] = [
     requiredFields: [
       { apiName: 'Amount', displayName: 'Amount', description: 'Deal size estimate' },
       { apiName: 'Primary_Contact__c', displayName: 'Primary Contact', description: 'Primary contact for this opportunity' },
+      { apiName: 'Prospector__c', displayName: 'Prospector', description: 'Person who prospected this opportunity' },
     ],
   },
   {
