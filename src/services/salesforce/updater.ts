@@ -74,12 +74,12 @@ export class FieldUpdaterService {
 
     // Map API field names to user-friendly names that appear in Salesforce UI
     const fieldDisplayNames: Record<string, string[]> = {
-      'Amount': ['amount', 'opportunity amount', 'deal amount', 'deal size', 'deal value', 'price', 'value', 'opp amount', '$'],
-      'Primary_Contact__c': ['primary contact', 'contact', 'primary', 'main contact'],
-      'CloseDate': ['close date', 'expected close', 'close', 'closing date'],
+      'Amount': ['amount'],
+      'Primary_Contact__c': ['primary contact'],
+      'CloseDate': ['close date'],
       'Champion__c': ['champion'],
-      'NextStep': ['next step', 'next steps'],
-      'Implicated_Pain__c': ['implicated pain', 'pain'],
+      'NextStep': ['next step'],
+      'Implicated_Pain__c': ['implicate pain'],
     };
 
     const possibleNames = fieldDisplayNames[fieldName] || [fieldName.toLowerCase().replace(/__c$/, '').replace(/_/g, ' ')];
@@ -112,7 +112,7 @@ export class FieldUpdaterService {
         const inputFields: Array<{ name: string; role: string; ref: string }> = [];
         for (const [ref, element] of Object.entries(snapshot.data.refs)) {
           const role = element.role?.toString() || '';
-          if (['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+          if (['textbox', 'searchbox', 'combobox', 'checkbox', 'spinbutton'].includes(role)) {
             inputFields.push({
               name: element.name?.toString() || 'unnamed',
               role,
@@ -130,7 +130,7 @@ export class FieldUpdaterService {
         const role = element.role?.toString() || '';
 
         // Skip non-input elements
-        if (!['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+        if (!['textbox', 'searchbox', 'combobox', 'checkbox', 'spinbutton'].includes(role)) {
           continue;
         }
 
@@ -198,7 +198,7 @@ export class FieldUpdaterService {
         const availableFields: string[] = [];
         for (const [ref, element] of Object.entries(snapshot.data.refs)) {
           const role = element.role?.toString() || '';
-          if (['textbox', 'searchbox', 'combobox', 'checkbox'].includes(role)) {
+          if (['textbox', 'searchbox', 'combobox', 'checkbox', 'spinbutton'].includes(role)) {
             availableFields.push(element.name?.toString() || 'unnamed');
           }
         }
@@ -217,6 +217,7 @@ export class FieldUpdaterService {
         switch (fieldType) {
           case 'textbox':
           case 'searchbox':
+          case 'spinbutton':
             await this.browser.fillField(`@${fieldRef}`, value.toString());
             logger.info('Successfully filled field', { fieldName, value });
             return;
