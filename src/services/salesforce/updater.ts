@@ -264,17 +264,42 @@ export class FieldUpdaterService {
     // Normalize stage name - remove numeric prefixes
     const normalizedStage = newStage.replace(/^\d+\s*-\s*/, '').trim();
 
+    logger.info('Looking for stage picker');
+
     // Find stage picker (button or combobox)
+    // Look for element whose name matches stage pattern like "0 - Prospect", "1 - Qualification"
     let stageRef: string | null = null;
     for (const [ref, element] of Object.entries(snapshot.data.refs)) {
-      const name = element.name?.toString().toLowerCase() || '';
+      const name = element.name?.toString() || '';
       const role = element.role?.toString() || '';
 
-      // Look for stage field/button
-      if ((role === 'button' || role === 'combobox') &&
-          (name.includes('stage') || name.includes('0 -') || name.includes('1 -'))) {
+      // Look for stage picker button/combobox with pattern like "0 - Prospect"
+      // Avoid matching fields like "Stage 1 Date Stamp" by checking for the dash pattern
+      const hasStagePattern = /^\d+\s*-\s*[A-Za-z]/.test(name);
+
+      if ((role === 'button' || role === 'combobox') && hasStagePattern) {
         stageRef = ref;
+        logger.info('Found stage picker', { name, role, ref });
         break;
+      }
+    }
+
+    // If not found with strict pattern, try fallback
+    if (!stageRef) {
+      logger.warn('Stage picker not found with pattern, trying fallback');
+      for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+        const name = element.name?.toString().toLowerCase() || '';
+        const role = element.role?.toString() || '';
+
+        // Fallback: look for "stage" but exclude "date" and "stamp"
+        if ((role === 'button' || role === 'combobox') &&
+            name.includes('stage') &&
+            !name.includes('date') &&
+            !name.includes('stamp')) {
+          stageRef = ref;
+          logger.info('Found stage picker (fallback)', { name, role, ref });
+          break;
+        }
       }
     }
 
