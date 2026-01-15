@@ -125,6 +125,9 @@ export class FieldUpdaterService {
         });
       }
 
+      // Collect all potential matches with their priority levels
+      const potentialMatches: Array<{ ref: string; role: string; name: string; priority: number; matchType: string }> = [];
+
       for (const [ref, element] of Object.entries(snapshot.data.refs)) {
         const elementName = element.name?.toString().toLowerCase() || '';
         const role = element.role?.toString() || '';
@@ -134,68 +137,62 @@ export class FieldUpdaterService {
           continue;
         }
 
-        // Try matching against possible names with priority order:
-        // 1. Exact match (most specific)
-        // 2. Word boundary match
-        // 3. Contains match (least specific)
+        // Check for matches with priority levels
         for (const possibleName of possibleNames) {
-          let matched = false;
-
-          // Priority 1: Try exact match (case-insensitive)
+          // Priority 1: Exact match (highest priority)
           if (elementName === possibleName) {
-            fieldRef = ref;
-            fieldType = role;
-            matched = true;
-            logger.info('Found field element (exact match)', {
-              fieldName,
-              searchTerm: possibleName,
-              elementName: element.name,
+            potentialMatches.push({
+              ref,
               role,
-              ref
+              name: element.name?.toString() || '',
+              priority: 1,
+              matchType: 'exact'
             });
-            break;
+            break; // Don't check other match types for this element
+          }
+
+          // Priority 2: Word boundary match
+          const words = elementName.split(/[\s\-_*()]+/);
+          if (words.some(word => word === possibleName)) {
+            potentialMatches.push({
+              ref,
+              role,
+              name: element.name?.toString() || '',
+              priority: 2,
+              matchType: 'word boundary'
+            });
+            break; // Don't check other match types for this element
+          }
+
+          // Priority 3: Contains match (lowest priority)
+          if (elementName.includes(possibleName)) {
+            potentialMatches.push({
+              ref,
+              role,
+              name: element.name?.toString() || '',
+              priority: 3,
+              matchType: 'contains'
+            });
+            break; // Don't check other match types for this element
           }
         }
+      }
 
-        // Priority 2: If no exact match, try word boundary match
-        if (!fieldRef) {
-          for (const possibleName of possibleNames) {
-            const words = elementName.split(/[\s\-_*()]+/);
-            if (words.some(word => word === possibleName)) {
-              fieldRef = ref;
-              fieldType = role;
-              logger.info('Found field element (word boundary match)', {
-                fieldName,
-                searchTerm: possibleName,
-                elementName: element.name,
-                role,
-                ref,
-                words: words.slice(0, 5)
-              });
-              break;
-            }
-          }
-        }
+      // Pick the best match (lowest priority number = highest priority)
+      if (potentialMatches.length > 0) {
+        potentialMatches.sort((a, b) => a.priority - b.priority);
+        const bestMatch = potentialMatches[0];
+        fieldRef = bestMatch.ref;
+        fieldType = bestMatch.role;
 
-        // Priority 3: If still no match, try partial contains (most lenient)
-        if (!fieldRef) {
-          for (const possibleName of possibleNames) {
-            if (elementName.includes(possibleName)) {
-              fieldRef = ref;
-              fieldType = role;
-              logger.info('Found field element (contains match)', {
-                fieldName,
-                searchTerm: possibleName,
-                elementName: element.name,
-                role,
-                ref
-              });
-              break;
-            }
-          }
-        }
-
-        if (fieldRef) break;
+        logger.info(`Found field element (${bestMatch.matchType} match)`, {
+          fieldName,
+          elementName: bestMatch.name,
+          role: bestMatch.role,
+          ref: bestMatch.ref,
+          totalMatches: potentialMatches.length,
+          allMatches: potentialMatches.map(m => `${m.name} (${m.matchType})`)
+        });
       }
 
       if (!fieldRef) {
