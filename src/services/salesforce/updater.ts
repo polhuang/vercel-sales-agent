@@ -223,12 +223,44 @@ export class FieldUpdaterService {
             return;
 
           case 'combobox':
-            // For picklists, need to click and select
+            // For comboboxes and lookup fields, need to click, type to search, and select from dropdown
+            logger.info('Opening combobox dropdown', { fieldName, value });
             await this.browser.clickElement(`@${fieldRef}`);
             await this.browser.wait(500);
+
+            // Type the value to search/filter
             await this.browser.fillField(`@${fieldRef}`, value.toString());
-            logger.info('Successfully set combobox field', { fieldName, value });
-            return;
+            await this.browser.wait(1000); // Wait for dropdown options to appear
+
+            // Get fresh snapshot to see dropdown options
+            const dropdownSnapshot = await this.browser.getSnapshot();
+
+            // Look for matching option in dropdown
+            let optionFound = false;
+            const searchValue = value.toString().toLowerCase();
+
+            for (const [optionRef, optionElement] of Object.entries(dropdownSnapshot.data.refs)) {
+              const optionRole = optionElement.role?.toString() || '';
+              const optionName = optionElement.name?.toString() || '';
+
+              // Look for option or menuitem roles
+              if ((optionRole === 'option' || optionRole === 'menuitem') && optionName.toLowerCase().includes(searchValue)) {
+                logger.info('Found matching dropdown option', { fieldName, optionName, optionRef });
+                await this.browser.clickElement(`@${optionRef}`);
+                await this.browser.wait(500);
+                optionFound = true;
+                break;
+              }
+            }
+
+            if (optionFound) {
+              logger.info('Successfully selected from combobox', { fieldName, value });
+              return;
+            } else {
+              logger.warn('No matching option found in dropdown, field may still be filled', { fieldName, value });
+              // Don't throw error, the value might have been filled even if we didn't select from dropdown
+              return;
+            }
 
           case 'checkbox':
             // For checkboxes, click if value is true
