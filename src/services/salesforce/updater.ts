@@ -134,12 +134,15 @@ export class FieldUpdaterService {
           continue;
         }
 
-        // Try matching against possible names (more flexible matching)
+        // Try matching against possible names with priority order:
+        // 1. Exact match (most specific)
+        // 2. Word boundary match
+        // 3. Contains match (least specific)
         for (const possibleName of possibleNames) {
           let matched = false;
 
-          // Try exact contains
-          if (elementName.includes(possibleName)) {
+          // Priority 1: Try exact match (case-insensitive)
+          if (elementName === possibleName) {
             fieldRef = ref;
             fieldType = role;
             matched = true;
@@ -152,41 +155,43 @@ export class FieldUpdaterService {
             });
             break;
           }
+        }
 
-          // Try partial word match (e.g., "amount" matches "Amount*")
-          const words = elementName.split(/[\s\-_*()]+/);
-          if (words.some(word => word === possibleName || word.startsWith(possibleName))) {
-            fieldRef = ref;
-            fieldType = role;
-            matched = true;
-            logger.info('Found field element (word match)', {
-              fieldName,
-              searchTerm: possibleName,
-              elementName: element.name,
-              role,
-              ref,
-              words: words.slice(0, 5)
-            });
-            break;
+        // Priority 2: If no exact match, try word boundary match
+        if (!fieldRef) {
+          for (const possibleName of possibleNames) {
+            const words = elementName.split(/[\s\-_*()]+/);
+            if (words.some(word => word === possibleName)) {
+              fieldRef = ref;
+              fieldType = role;
+              logger.info('Found field element (word boundary match)', {
+                fieldName,
+                searchTerm: possibleName,
+                elementName: element.name,
+                role,
+                ref,
+                words: words.slice(0, 5)
+              });
+              break;
+            }
           }
+        }
 
-          // Try matching without special characters (skip if search term becomes empty)
-          const cleanElementName = elementName.replace(/[^a-z0-9\s]/g, '');
-          const cleanPossibleName = possibleName.replace(/[^a-z0-9\s]/g, '');
-          if (cleanPossibleName.trim().length > 0 && cleanElementName.includes(cleanPossibleName)) {
-            fieldRef = ref;
-            fieldType = role;
-            matched = true;
-            logger.info('Found field element (clean match)', {
-              fieldName,
-              searchTerm: possibleName,
-              elementName: element.name,
-              cleanElementName,
-              cleanPossibleName,
-              role,
-              ref
-            });
-            break;
+        // Priority 3: If still no match, try partial contains (most lenient)
+        if (!fieldRef) {
+          for (const possibleName of possibleNames) {
+            if (elementName.includes(possibleName)) {
+              fieldRef = ref;
+              fieldType = role;
+              logger.info('Found field element (contains match)', {
+                fieldName,
+                searchTerm: possibleName,
+                elementName: element.name,
+                role,
+                ref
+              });
+              break;
+            }
           }
         }
 
