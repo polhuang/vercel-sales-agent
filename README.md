@@ -1,12 +1,8 @@
 # Vercel Sales Agent
 
-AI-powered TUI (Text User Interface) for automating Salesforce opportunity management using Claude AI and natural language processing.
+AI-powered TUI for common sales workflows, starting with automating Salesforce opportunity management using Claude AI and natural language processing.
 
-## How It Works
-
-This tool uses browser automation instead of the Salesforce API, making it accessible to sales reps without API credentials. It uses [`agent-browser`](https://github.com/vercel-labs/agent-browser) to dynamically identify and interact with Salesforce form fields through the DOM.
-
-[`agent-browser`](https://github.com/vercel-labs/agent-browser) can traverse Salesforce's [Shadow DOM](https://developer.salesforce.com/docs/platform/lwc/guide/create-dom.html), which traditionally prevented automated DOM interaction by encapsulating component structures in isolated, hidden DOM trees. By navigating these encapsulated trees, the tool can search for fields, select the correct elements, and inject data directly into Salesforce opportunities without requiring API access.
+More features to come.
 
 ## Overview
 
@@ -15,6 +11,12 @@ This tool helps sales teams at Vercel automate Salesforce opportunity updates by
 - Extracting relevant field updates using Claude AI
 - Validating stage-gate requirements
 - Automatically updating Salesforce opportunities via browser automation
+
+## How It Works
+
+This tool uses browser automation instead of the Salesforce API, making it accessible to sales reps without API credentials. It uses [`agent-browser`](https://github.com/vercel-labs/agent-browser) to dynamically identify and interact with Salesforce form fields through the DOM.
+
+[`agent-browser`](https://github.com/vercel-labs/agent-browser) can traverse Salesforce's [Shadow DOM](https://developer.salesforce.com/docs/platform/lwc/guide/create-dom.html), which traditionally prevented automated DOM interaction by encapsulating component structures in isolated, hidden DOM trees. By navigating these encapsulated trees, the tool can search for fields, select the correct elements, and inject data directly into Salesforce opportunities without requiring API access.
 
 ## Features
 
