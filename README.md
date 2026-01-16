@@ -2,6 +2,12 @@
 
 AI-powered TUI (Text User Interface) for automating Salesforce opportunity management using Claude AI and natural language processing.
 
+## How It Works
+
+This tool uses browser automation instead of the Salesforce API, making it accessible to sales reps without API credentials. It uses [`agent-browser`](https://github.com/vercel-labs/agent-browser) to dynamically identify and interact with Salesforce form fields through the DOM.
+
+[`agent-browser`](https://github.com/vercel-labs/agent-browser) can traverse Salesforce's [Shadow DOM](https://developer.salesforce.com/docs/platform/lwc/guide/create-dom.html), which traditionally prevented automated DOM interaction by encapsulating component structures in isolated, hidden DOM trees. By navigating these encapsulated trees, the tool can search for fields, select the correct elements, and inject data directly into Salesforce opportunities without requiring API access.
+
 ## Overview
 
 This tool helps sales teams at Vercel automate Salesforce opportunity updates by:
@@ -12,58 +18,74 @@ This tool helps sales teams at Vercel automate Salesforce opportunity updates by
 
 ## Features
 
-- 🤖 **AI-Powered Extraction**: Uses Claude to intelligently extract Salesforce fields from call notes
-- 🎯 **Stage-Gate Validation**: Enforces Vercel's opportunity stage requirements
-- 🔒 **Secure Authentication**: Uses browser cookies for Salesforce authentication
-- 📝 **Natural Language**: Write notes naturally - AI handles the field mapping
-- ✅ **Preview & Confirm**: Review all changes before applying to Salesforce
+- **AI-Powered Extraction**: Uses Claude to intelligently extract Salesforce fields from call notes
+- **Stage-Gate Validation**: Enforces Vercel's opportunity stage requirements
+- **Secure Authentication**: Uses browser cookies for Salesforce authentication
+- **Natural Language**: Write notes naturally - AI handles the field mapping
+- **Preview & Confirm**: Review all changes before applying to Salesforce
 
-## Prerequisites
+## Quick Start
+
+Get up and running in 5 minutes.
+
+### Prerequisites
 
 - Node.js v18+ (tested with v25.2.1)
 - agent-browser installed globally: `npm install -g agent-browser`
 - Anthropic API key for Claude
 - Active Salesforce session cookies
 
-## Installation
+### Step 1: Installation
 
 ```bash
 cd ~/projects/vercel-sales-agent
 npm install
 ```
 
-## Configuration
+### Step 2: Add Your API Key
 
-1. Create `.env` file:
 ```bash
 cp .env.example .env
+echo "ANTHROPIC_API_KEY=your_actual_key_here" > .env
 ```
 
-2. Add your Anthropic API key:
+Get your API key from: https://console.anthropic.com/
+
+### Step 3: Extract Salesforce Cookies
+
+You need cookies from an active Salesforce session. Choose one method:
+
+**Option A: Quick Console Method (Recommended)**
+
+1. Open Chrome and go to https://vercel.my.salesforce.com (logged in)
+2. Press F12 to open DevTools
+3. Go to Console tab
+4. Copy and paste this:
+
+```javascript
+// Copy this entire block into Chrome Console
+const cookies = document.cookie.split('; ').reduce((acc, cookie) => {
+  const [name, value] = cookie.split('=');
+  if (['sid', 'oid', 'clientSrc', 'sid_Client'].includes(name)) {
+    acc[name] = value;
+  }
+  return acc;
+}, {});
+
+console.log('Your cookies:');
+console.log(JSON.stringify(cookies, null, 2));
 ```
-ANTHROPIC_API_KEY=your_api_key_here
-```
 
-## Usage
+5. Copy the output cookies
 
-### Quick Start
-
-```bash
-npm start
-```
-
-### Extract Salesforce Cookies
-
-Before using the tool, you need to extract cookies from an active Salesforce session:
-
-**Method 1: Using the provided script**
+**Option B: Use Provided Script**
 
 1. Log into https://vercel.my.salesforce.com in Chrome
 2. Open DevTools Console (F12 → Console tab)
 3. Paste contents of `scripts/extract-salesforce-cookies.js`
 4. Script will copy the command to your clipboard
 
-**Method 2: Manual extraction**
+**Option C: Manual Extraction**
 
 1. Log into Salesforce in Chrome
 2. Open DevTools (F12) → Application → Cookies
@@ -73,6 +95,37 @@ Before using the tool, you need to extract cookies from an active Salesforce ses
    - `oid` (recommended)
    - `clientSrc` (recommended)
    - `sid_Client` (recommended)
+
+### Step 4: Test the Build
+
+```bash
+npm run build
+```
+
+Expected output: No errors, `dist/` folder created
+
+### Step 5: Test Authentication (Optional)
+
+Verify cookies work using the standalone script:
+
+```bash
+./scripts/salesforce-login.sh \
+  --sid 'your_sid_value_here' \
+  --oid 'your_oid_value' \
+  --client-src 'your_clientSrc'
+```
+
+Expected output: "Successfully authenticated to Salesforce!"
+
+### Step 6: Run the Application
+
+```bash
+npm start
+```
+
+**Note**: This is an MVP implementation. Full interactive TUI coming soon!
+
+## Usage
 
 ### Example Workflow
 
@@ -105,6 +158,85 @@ Before using the tool, you need to extract cookies from an active Salesforce ses
    - Changes are applied to Salesforce
    - Verification and success message
 
+### Example Output (Once Full TUI is Complete)
+
+```bash
+$ npm start
+
+╔════════════════════════════════════════════╗
+║   Vercel Sales Agent - AI-Powered TUI     ║
+╚════════════════════════════════════════════╝
+
+Enter Salesforce Cookies
+────────────────────────────────────────────
+[*] sid (required):     [paste here]
+[ ] oid (optional):     [paste here]
+[ ] clientSrc:          [paste here]
+
+Authenticating...
+Successfully authenticated!
+
+Enter Opportunity ID: 006Hs000001x2YZ
+
+Loading opportunity...
+Loaded: Acme Corp - Enterprise Deal
+   Stage: Qualification
+   Amount: $50,000
+
+Enter Call Notes:
+────────────────────────────────────────────
+1 | Had great call with CTO Sarah.
+2 | Deal size now $75k ARR.
+3 | Main pain: slow deploys (2hr → want 5min)
+4 | Next step: demo Friday
+
+Processing with Claude...
+Extracted 3 field updates
+
+Preview Changes:
+────────────────────────────────────────────
+  Amount:          $50,000 → $75,000
+  Implicated Pain: (empty) → Slow deploys...
+  NextStep:        (empty) → Demo Friday
+
+Press Enter to confirm...
+
+Updating Salesforce...
+Successfully updated!
+```
+
+## Testing
+
+### Verify Services Load
+
+```bash
+npm start
+```
+
+Should see welcome screen without errors.
+
+### Check Build Output
+
+```bash
+ls -la dist/
+```
+
+Should see:
+- app.js
+- index.js
+- services/ (with salesforce, claude, validation)
+- config/
+- types/
+- utils/
+
+### Verify Field Mappings
+
+```bash
+node -e "import('./dist/config/salesforce.js').then(m => console.log(Object.keys(m.FIELD_MAPPINGS).length + ' mappings loaded'))"
+```
+
+Should show: "60+ mappings loaded"
+
 ## Project Structure
 
 ```
@@ -123,7 +255,6 @@ Before using the tool, you need to extract cookies from an active Salesforce ses
 ├── scripts/                     # Helper scripts
 ├── docs/                        # Documentation
 └── debug/                       # Debug screenshots
-
 ```
 
 ## Stage-Gate Requirements
@@ -160,14 +291,25 @@ The AI understands natural language and maps it to Salesforce fields:
 
 ## Development
 
+### Development Mode
+
+Run with hot reload for active development:
+
 ```bash
-# Run in development mode with hot reload
 npm run dev
+```
 
-# Build TypeScript
+Changes to TypeScript files will automatically reload.
+
+### Build
+
+```bash
 npm run build
+```
 
-# Run built version
+### Run Built Version
+
+```bash
 node dist/index.js
 ```
 
@@ -179,11 +321,16 @@ All operations are logged to `vercel-sales-agent.log`:
 - Field updates
 - Errors with stack traces
 
+Check logs:
+```bash
+tail -f vercel-sales-agent.log
+```
+
 ## Debugging
 
 - Screenshots are saved to `debug/` on errors
-- Check logs: `tail -f vercel-sales-agent.log`
 - Use `--headed` mode in agent-browser for visual debugging
+- Check logs for detailed operation traces
 
 ## Security Notes
 
@@ -194,27 +341,55 @@ All operations are logged to `vercel-sales-agent.log`:
 
 ## Troubleshooting
 
-**"Authentication failed"**
+### "Cannot find module"
+```bash
+npm install
+npm run build
+```
+
+### "ANTHROPIC_API_KEY not set"
+```bash
+# Make sure .env file exists and contains your key
+cat .env
+```
+
+### "agent-browser not found"
+```bash
+npm install -g agent-browser
+agent-browser install
+```
+
+### "Authentication failed"
 - Cookies have expired - extract fresh ones from browser
 - Verify you're using cookies from vercel.my.salesforce.com domain
+- Check cookies haven't expired (they usually last a few hours)
 
-**"agent-browser command failed"**
+### "agent-browser command failed"
 - Ensure agent-browser is installed: `npm list -g agent-browser`
 - Check if Chromium is installed: `agent-browser install`
 
-**"No API key found"**
+### "No API key found"
 - Verify `.env` file exists with `ANTHROPIC_API_KEY`
 - Restart terminal to reload environment variables
 
+## Next Actions
+
+After installation, follow these steps:
+1. Add your API key to `.env`
+2. Extract cookies from Salesforce
+3. Test authentication with standalone script
+4. Run the app with `npm start`
+5. Check logs in `vercel-sales-agent.log`
+
 ## Future Enhancements
 
-- [ ] Interactive TUI for cookie input
-- [ ] Batch opportunity updates
-- [ ] Template support for common note patterns
-- [ ] Field learning from corrections
-- [ ] Slack notifications for updates
-- [ ] CSV import/export
-- [ ] Advanced stage transition analytics
+- Interactive TUI for cookie input
+- Batch opportunity updates
+- Template support for common note patterns
+- Field learning from corrections
+- Slack notifications for updates
+- CSV import/export
+- Advanced stage transition analytics
 
 ## Contributing
 
@@ -227,8 +402,9 @@ Internal use only - Vercel Inc.
 ## Support
 
 For questions or issues:
-- Check documentation in `docs/`
+- Implementation details: `IMPLEMENTATION-SUMMARY.md`
 - Review logs in `vercel-sales-agent.log`
+- Debug screenshots: `debug/` folder
 - Contact sales engineering team
 
 ## Related Files
@@ -236,3 +412,4 @@ For questions or issues:
 - `scripts/salesforce-login.sh` - Standalone auth script for testing
 - `scripts/extract-salesforce-cookies.js` - Browser cookie extraction helper
 - `docs/SALESFORCE-AUTOMATION.md` - Detailed automation guide
+- `IMPLEMENTATION-SUMMARY.md` - Full implementation details

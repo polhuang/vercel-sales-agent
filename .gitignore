@@ -19,3 +19,7 @@ debug/
 
 # Claude Code config (may contain local paths)
 .claude.json
+
+# AI assistant documentation
+CLAUDE.md
+IMPLEMENTATION-SUMMARY.md
