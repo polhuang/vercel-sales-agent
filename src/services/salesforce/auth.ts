@@ -1,13 +1,16 @@
 import { AgentBrowserService } from './browser.js';
 import { SalesforceCookies } from '../../types/cookies.js';
 import { logger } from '../../utils/logger.js';
+import { SessionStorageService } from './sessionStorage.js';
 
 export class AuthService {
   private browser: AgentBrowserService;
+  private sessionStorage: SessionStorageService;
   private cookies: SalesforceCookies | null = null;
 
-  constructor(browser: AgentBrowserService) {
+  constructor(browser: AgentBrowserService, sessionStorage: SessionStorageService) {
     this.browser = browser;
+    this.sessionStorage = sessionStorage;
   }
 
   /**
@@ -121,6 +124,42 @@ export class AuthService {
   }
 
   /**
+   * Authenticate with saved session from disk
+   * Returns true if session is valid, false otherwise
+   */
+  async authenticateWithSavedSession(): Promise<boolean> {
+    try {
+      // Load cookies from disk
+      logger.info('Attempting to load saved session');
+      const cookies = this.sessionStorage.loadCookies();
+
+      if (!cookies) {
+        logger.info('No saved session found');
+        return false;
+      }
+
+      // Set cookies in browser using existing authenticate method
+      await this.authenticate(cookies);
+
+      // Verify session is still valid
+      const isValid = await this.verifyAuthentication();
+
+      if (!isValid) {
+        logger.warn('Saved session is no longer valid, clearing');
+        this.sessionStorage.clearSession();
+        return false;
+      }
+
+      logger.info('Successfully authenticated with saved session');
+      return true;
+    } catch (error: any) {
+      logger.error('Error authenticating with saved session', error);
+      this.sessionStorage.clearSession();
+      return false;
+    }
+  }
+
+  /**
    * Wait for user to authenticate and extract cookies automatically
    */
   async waitForAuthenticationAndExtractCookies(url: string = 'https://vercel.my.salesforce.com'): Promise<SalesforceCookies> {
@@ -204,6 +243,10 @@ export class AuthService {
     });
 
     this.cookies = cookies;
+
+    // Save cookies to disk for future sessions
+    this.sessionStorage.saveCookies(cookies);
+
     return cookies;
   }
 
@@ -212,6 +255,13 @@ export class AuthService {
    */
   getCookies(): SalesforceCookies | null {
     return this.cookies;
+  }
+
+  /**
+   * Clear saved session from disk
+   */
+  clearSavedSession(): void {
+    this.sessionStorage.clearSession();
   }
 
   /**

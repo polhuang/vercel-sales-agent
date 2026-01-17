@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { AgentBrowserService } from './services/salesforce/browser.js';
 import { AuthService } from './services/salesforce/auth.js';
+import { SessionStorageService } from './services/salesforce/sessionStorage.js';
 import { NavigationService } from './services/salesforce/navigation.js';
 import { FieldExtractorService } from './services/salesforce/extractor.js';
 import { FieldUpdaterService } from './services/salesforce/updater.js';
@@ -22,6 +23,7 @@ import { MissingFieldsInput } from './components/MissingFieldsInput.js';
 
 type Screen =
   | 'welcome'
+  | 'checking-session'
   | 'authenticating'
   | 'authenticated'
   | 'intent-input'
@@ -48,7 +50,8 @@ export default function App({ apiKey }: AppProps) {
   // Services
   const [browser] = useState(() => new AgentBrowserService('default', true)); // headful mode
   const [claude] = useState(() => new ClaudeClient(apiKey));
-  const [auth] = useState(() => new AuthService(browser));
+  const [sessionStorage] = useState(() => new SessionStorageService('.sf-session.json'));
+  const [auth] = useState(() => new AuthService(browser, sessionStorage));
   const [nav] = useState(() => new NavigationService(browser));
   const [extractor] = useState(() => new FieldExtractorService(browser, claude));
   const [updater] = useState(() => new FieldUpdaterService(browser));
@@ -70,24 +73,51 @@ export default function App({ apiKey }: AppProps) {
     description: string;
   }>>([]);
 
-  // Handle keyboard input
-  useInput((input, key) => {
-    if (screen === 'welcome') {
-      // Any key moves to browser authentication
-      handleBrowserAuth();
-    } else if (screen === 'authenticated') {
-      // Any key moves to intent input
-      setScreen('intent-input');
-    } else if (screen === 'preview' && !extraction?.missingFields?.length) {
-      // On preview screen with no missing fields, Enter to apply updates
-      if (key.return) {
-        handleApplyUpdates();
+  // Helper function to format session age
+  const formatSessionAge = (ageMs: number | null): string => {
+    if (ageMs === null) return 'unknown';
+
+    const minutes = Math.floor(ageMs / (1000 * 60));
+    const hours = Math.floor(ageMs / (1000 * 60 * 60));
+    const days = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return 'just now';
+  };
+
+  // Handle checking saved session
+  const handleCheckSavedSession = async () => {
+    setScreen('checking-session');
+    setMessage('Checking for saved session...');
+
+    try {
+      logger.info('Checking for saved session');
+
+      // Try to authenticate with saved session
+      const sessionValid = await auth.authenticateWithSavedSession();
+
+      if (sessionValid) {
+        // Session is valid, extract cookies and move to authenticated
+        const validCookies = auth.getCookies();
+        if (validCookies) {
+          setCookies(validCookies);
+          setScreen('authenticated');
+          setMessage('Successfully authenticated with saved session!');
+          return;
+        }
       }
-    } else if (key.escape || (key.ctrl && input === 'c')) {
-      // Ctrl+C or ESC to exit
-      process.exit(0);
+
+      // No valid session, fall back to browser authentication
+      logger.info('No valid saved session, falling back to browser auth');
+      await handleBrowserAuth();
+    } catch (err: any) {
+      logger.error('Error checking saved session', err);
+      // Fall back to browser authentication
+      await handleBrowserAuth();
     }
-  });
+  };
 
   // Handle browser-based authentication
   const handleBrowserAuth = async () => {
@@ -295,7 +325,8 @@ export default function App({ apiKey }: AppProps) {
       logger.info('Opportunity loaded', {
         id: currentState.id,
         name: currentState.name,
-        stage: currentState.stage
+        stage: currentState.stage,
+        fields: currentState.fields
       });
 
       setOppState(currentState);
@@ -404,6 +435,10 @@ export default function App({ apiKey }: AppProps) {
               setScreen('missing-fields');
               return;
             }
+          } else if (validationResult.isValid) {
+            // Validation passed - clear any missing fields that Claude reported
+            // since the validator confirmed all required fields are present
+            claudeExtraction.missingFields = [];
           }
         }
 
@@ -421,7 +456,36 @@ export default function App({ apiKey }: AppProps) {
     }
   };
 
+  // Handle keyboard input
+  useInput((input, key) => {
+    if (screen === 'welcome') {
+      // Check for 'c' key to clear saved session
+      if (input === 'c' || input === 'C') {
+        auth.clearSavedSession();
+        setMessage('Saved session cleared. Press any key to login...');
+      } else {
+        // Any other key tries to load saved session or falls back to browser auth
+        handleCheckSavedSession();
+      }
+    } else if (screen === 'authenticated') {
+      // Any key moves to intent input
+      setScreen('intent-input');
+    } else if (screen === 'preview' && !extraction?.missingFields?.length) {
+      // On preview screen with no missing fields, Enter to apply updates
+      if (key.return) {
+        handleApplyUpdates();
+      }
+    } else if (key.escape || (key.ctrl && input === 'c')) {
+      // Ctrl+C or ESC to exit
+      process.exit(0);
+    }
+  });
+
   if (screen === 'welcome') {
+    const hasSession = sessionStorage.sessionExists();
+    const sessionAge = sessionStorage.getSessionAge();
+    const sessionAgeFormatted = formatSessionAge(sessionAge);
+
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color="cyan">
@@ -438,21 +502,51 @@ export default function App({ apiKey }: AppProps) {
             This tool helps automate Salesforce opportunity updates using natural language.
           </Text>
         </Box>
-        <Box marginTop={1}>
-          <Text dimColor>
-            When you press any key, a Chrome browser will open to Salesforce.
-          </Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>
-            Please log in with your Okta credentials. Once authenticated,
-            the app will automatically extract your session cookies.
-          </Text>
-        </Box>
+        {hasSession ? (
+          <>
+            <Box marginTop={1}>
+              <Text color="green">
+                Found saved session (saved {sessionAgeFormatted})
+              </Text>
+            </Box>
+            <Box marginTop={1}>
+              <Text dimColor>
+                Press any key to restore session, or press 'c' to clear and login again.
+              </Text>
+            </Box>
+          </>
+        ) : (
+          <>
+            <Box marginTop={1}>
+              <Text dimColor>
+                {message || 'When you press any key, a Chrome browser will open to Salesforce.'}
+              </Text>
+            </Box>
+            <Box marginTop={1}>
+              <Text dimColor>
+                Please log in with your Okta credentials. Once authenticated,
+                the app will automatically save your session for future use.
+              </Text>
+            </Box>
+          </>
+        )}
         <Box marginTop={1}>
           <Text color="yellow">
-            Press any key to open browser and authenticate...
+            {hasSession
+              ? 'Press any key to continue...'
+              : 'Press any key to open browser and authenticate...'}
           </Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === 'checking-session') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="cyan">Checking Saved Session</Text>
+        <Box marginTop={1}>
+          <Text dimColor>{message}</Text>
         </Box>
       </Box>
     );

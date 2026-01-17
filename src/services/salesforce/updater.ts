@@ -130,22 +130,37 @@ export class FieldUpdaterService {
       const potentialMatches: Array<{ ref: string; role: string; name: string; priority: number; matchType: string }> = [];
 
       for (const [ref, element] of Object.entries(snapshot.data.refs)) {
-        const elementName = element.name?.toString().toLowerCase() || '';
+        const rawElementName = element.name?.toString() || '';
+        const elementName = rawElementName.toLowerCase();
         const role = element.role?.toString() || '';
 
-        // Skip non-input elements
-        if (!['textbox', 'searchbox', 'combobox', 'checkbox', 'spinbutton'].includes(role)) {
+        // Handle different element types
+        let isFieldElement = false;
+        let normalizedName = elementName;
+
+        // Check for input elements
+        if (['textbox', 'searchbox', 'combobox', 'checkbox', 'spinbutton'].includes(role)) {
+          isFieldElement = true;
+        }
+        // Check for "Edit X" buttons (common in Salesforce Key Fields section)
+        else if (role === 'button' && elementName.startsWith('edit ')) {
+          isFieldElement = true;
+          // Strip "edit " prefix for matching
+          normalizedName = elementName.substring(5).trim();
+        }
+
+        if (!isFieldElement) {
           continue;
         }
 
         // Check for matches with priority levels
         for (const possibleName of possibleNames) {
           // Priority 1: Exact match (highest priority)
-          if (elementName === possibleName) {
+          if (normalizedName === possibleName) {
             potentialMatches.push({
               ref,
               role,
-              name: element.name?.toString() || '',
+              name: rawElementName,
               priority: 1,
               matchType: 'exact'
             });
@@ -153,12 +168,12 @@ export class FieldUpdaterService {
           }
 
           // Priority 2: Word boundary match
-          const words = elementName.split(/[\s\-_*()]+/);
-          if (words.some(word => word === possibleName)) {
+          const words = normalizedName.split(/[\s\-_*()]+/);
+          if (words.some((word: string) => word === possibleName)) {
             potentialMatches.push({
               ref,
               role,
-              name: element.name?.toString() || '',
+              name: rawElementName,
               priority: 2,
               matchType: 'word boundary'
             });
@@ -166,11 +181,11 @@ export class FieldUpdaterService {
           }
 
           // Priority 3: Contains match (lowest priority)
-          if (elementName.includes(possibleName)) {
+          if (normalizedName.includes(possibleName)) {
             potentialMatches.push({
               ref,
               role,
-              name: element.name?.toString() || '',
+              name: rawElementName,
               priority: 3,
               matchType: 'contains'
             });

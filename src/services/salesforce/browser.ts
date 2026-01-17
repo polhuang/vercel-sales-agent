@@ -32,7 +32,7 @@ export class AgentBrowserService {
     try {
       // Try to close any existing session (without session filter to close all)
       logger.info('Closing any existing browser session');
-      await execa('agent-browser', ['close'], {
+      await execa('npx', ['agent-browser', 'close'], {
         timeout: 10000,
       });
       logger.info('Existing session closed');
@@ -80,7 +80,7 @@ export class AgentBrowserService {
             command: `agent-browser ${cmdArgs.join(' ')}`
           });
 
-          const { stdout } = await execa('agent-browser', cmdArgs, {
+          const { stdout } = await execa('npx', ['agent-browser', ...cmdArgs], {
             timeout,
             env: {
               ...process.env,
@@ -151,9 +151,10 @@ export class AgentBrowserService {
 
   /**
    * Get page snapshot
+   * Note: Using '--json' without '-i' to get complete unfiltered snapshot including text elements
    */
   async getSnapshot(): Promise<PageSnapshot> {
-    const output = await this.exec('snapshot', ['-i', '--json']);
+    const output = await this.exec('snapshot', ['--json']);
     return JSON.parse(output);
   }
 

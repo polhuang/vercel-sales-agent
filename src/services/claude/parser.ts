@@ -92,12 +92,11 @@ EXTRACTION RULES:
 4. For amounts, extract numeric value only (no currency symbols)
 5. For dates, use YYYY-MM-DD format
 6. Consider the current stage when deciding if a stage change is appropriate
-7. **CRITICAL**: When proposing a stage change, check the stage-gate requirements above
-8. **CRITICAL**: List ALL missing required fields (by their API names) in "missingFields" array for the target stage
-9. Compare current fields with required fields - include any that are null, empty, or undefined
-10. If notes suggest readiness for next stage, propose stage change BUT still list missing fields
-11. Preserve customer quotes exactly as they appear in notes
-12. If information is ambiguous, set low confidence and add to suggestions
+7. Preserve customer quotes exactly as they appear in notes
+8. If information is ambiguous, set low confidence and add to suggestions
+9. **IMPORTANT**: Only populate missingFields if the notes explicitly MENTION a field but don't provide the value
+10. **IMPORTANT**: Do NOT check stage-gate requirements or validate missing fields - a separate validator handles this
+11. **IMPORTANT**: Do NOT generate suggestions about stage-gate requirements or missing fields - focus suggestions on clarifying ambiguous information from the notes
 
 EXAMPLES:
 
@@ -121,8 +120,17 @@ Output:
     {"field": "Implicated_Pain__c", "value": "Slow deployments (2 hours) - want sub-5 minute deploys", "confidence": "high", "source": "Main pain point is slow deployments taking 2 hours. They want sub-5 minute deploys."},
     {"field": "Metrics__c", "value": "Current: 2hr deploys, Target: <5min deploys", "confidence": "high", "source": "slow deployments taking 2 hours. They want sub-5 minute deploys"}
   ],
-  "missingFields": ["Pain_Quality__c", "NextStep", "Value_Driver__c", "Partner_Identified__c", "Tech_Stack__c"],
-  "suggestions": ["Missing required field: Pain Quality - Quality of pain identified", "Missing required field: Next Step - Next action to take", "Missing required field: Value Driver - What drives value for customer"]
+  "missingFields": [],
+  "suggestions": ["Consider documenting the business impact of slow deployments for stronger value proposition"]
+}
+
+Input: "Customer mentioned their champion but didn't provide the name. They're ready to move to next stage."
+Output:
+{
+  "stageChange": {"from": "Prospect", "to": "Qualification", "reason": "Customer expressed readiness to proceed"},
+  "fieldUpdates": [],
+  "missingFields": ["Champion__c"],
+  "suggestions": ["Follow up to get champion's name and title"]
 }
 
 Now parse the provided call notes and return ONLY the JSON response.`;
