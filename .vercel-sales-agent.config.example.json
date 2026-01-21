@@ -1,0 +1,10 @@
+{
+  "browser": {
+    "executablePath": "/path/to/chrome-or-chromium"
+  },
+  "prospecting": {
+    "defaultJobTitles": ["CTO", "VP Engineering", "Head of Infrastructure"],
+    "defaultCompanyName": "",
+    "defaultKeywords": ["kubernetes", "cloud", "DevOps"]
+  }
+}
