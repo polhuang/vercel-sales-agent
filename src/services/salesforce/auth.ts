@@ -1,4 +1,4 @@
-import { AgentBrowserService } from './browser.js';
+import { AgentBrowserService } from '../browser/index.js';
 import { SalesforceCookies } from '../../types/cookies.js';
 import { logger } from '../../utils/logger.js';
 import { SessionStorageService } from './sessionStorage.js';

@@ -1,31 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { AgentBrowserService } from './services/salesforce/browser.js';
-import { AuthService } from './services/salesforce/auth.js';
-import { SessionStorageService } from './services/salesforce/sessionStorage.js';
+import { AgentBrowserService } from './services/slack/browser.js';
+import { loadConfig } from './utils/config.js';
+import { AuthService as SalesforceAuthService } from './services/salesforce/auth.js';
+import { SessionStorageService as SalesforceSessionStorageService } from './services/salesforce/sessionStorage.js';
+import { AuthService as SlackAuthService } from './services/slack/auth.js';
+import { SessionStorageService as SlackSessionStorageService } from './services/slack/sessionStorage.js';
+import { LinkedInAuthService } from './services/linkedin/auth.js';
+import { LinkedInSessionStorageService } from './services/linkedin/sessionStorage.js';
 import { NavigationService } from './services/salesforce/navigation.js';
 import { FieldExtractorService } from './services/salesforce/extractor.js';
 import { FieldUpdaterService } from './services/salesforce/updater.js';
+import { SearchService, OpportunitySearchResult } from './services/salesforce/search.js';
+import { ProspectorService } from './services/linkedin/prospector.js';
 import { ClaudeClient } from './services/claude/client.js';
 import { ParserService } from './services/claude/parser.js';
 import { IntentParserService } from './services/claude/intentParser.js';
-import { SearchService, OpportunitySearchResult } from './services/salesforce/search.js';
 import { StageGateValidator } from './services/validation/stageGates.js';
-import { SalesforceCookies } from './types/cookies.js';
+import { SalesforceCookies, SlackCookies } from './types/cookies.js';
 import { OpportunityState } from './types/opportunity.js';
 import { ClaudeExtraction } from './types/updates.js';
 import { ParsedIntent } from './types/intent.js';
+import { ProspectSearchCriteria, CompanyCandidate } from './types/linkedin.js';
 import { logger } from './utils/logger.js';
+import { MainMenu } from './components/MainMenu.js';
 import { IntentInput } from './components/IntentInput.js';
-import { NotesInput } from './components/NotesInput.js';
 import { OpportunitySelector } from './components/OpportunitySelector.js';
 import { MissingFieldsInput } from './components/MissingFieldsInput.js';
+import { ManualCookieInput } from './components/ManualCookieInput.js';
+import { ProspectCriteriaInput } from './components/ProspectCriteriaInput.js';
+import { CompanySelector } from './components/CompanySelector.js';
 
 type Screen =
   | 'welcome'
   | 'checking-session'
-  | 'authenticating'
-  | 'authenticated'
+  | 'main-menu'
+  | 'salesforce-authenticating'
+  | 'salesforce-manual-cookie-input'
+  | 'salesforce-authenticated'
+  | 'slack-authenticating'
+  | 'slack-authenticated'
+  | 'linkedin-authenticating'
+  | 'linkedin-authenticated'
+  | 'finding-paul'
   | 'intent-input'
   | 'parsing-intent'
   | 'searching'
@@ -35,6 +52,9 @@ type Screen =
   | 'preview'
   | 'missing-fields'
   | 'updating'
+  | 'prospect-criteria-input'
+  | 'company-selection'
+  | 'prospect-searching'
   | 'success'
   | 'error';
 
@@ -47,123 +67,293 @@ export default function App({ apiKey }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string>('');
 
-  // Services
-  const [browser] = useState(() => new AgentBrowserService('default', true)); // headful mode
-  const [claude] = useState(() => new ClaudeClient(apiKey));
-  const [sessionStorage] = useState(() => new SessionStorageService('.sf-session.json'));
-  const [auth] = useState(() => new AuthService(browser, sessionStorage));
+  // Load config
+  const [config] = useState(() => loadConfig());
+
+  // Shared browser service
+  const [browser] = useState(() => new AgentBrowserService('default', true, config.browser?.executablePath));
+
+  // Salesforce services
+  const [salesforceSessionStorage] = useState(() => new SalesforceSessionStorageService('.sf-session.json'));
+  const [salesforceAuth] = useState(() => new SalesforceAuthService(browser, salesforceSessionStorage));
   const [nav] = useState(() => new NavigationService(browser));
-  const [extractor] = useState(() => new FieldExtractorService(browser, claude));
-  const [updater] = useState(() => new FieldUpdaterService(browser));
   const [search] = useState(() => new SearchService(browser));
+  const [updater] = useState(() => new FieldUpdaterService(browser));
+
+  // Slack services
+  const [slackSessionStorage] = useState(() => new SlackSessionStorageService('.slack-session.json'));
+  const [slackAuth] = useState(() => new SlackAuthService(browser, slackSessionStorage));
+
+  // LinkedIn services
+  const [linkedInSessionStorage] = useState(() => new LinkedInSessionStorageService('.linkedin-session.json'));
+  const [linkedInAuth] = useState(() => new LinkedInAuthService(browser, linkedInSessionStorage));
+  const [prospector] = useState(() => new ProspectorService(browser));
+
+  // Claude services
+  const [claude] = useState(() => new ClaudeClient(apiKey));
+  const [extractor] = useState(() => new FieldExtractorService(browser, claude));
   const [parser] = useState(() => new ParserService(claude));
   const [intentParser] = useState(() => new IntentParserService(claude));
   const [validator] = useState(() => new StageGateValidator());
 
   // State
-  const [cookies, setCookies] = useState<SalesforceCookies | null>(null);
+  const [workflow, setWorkflow] = useState<'prospecting' | 'salesforce' | 'slack' | null>(null);
+  const [salesforceCookies, setSalesforceCookies] = useState<SalesforceCookies | null>(null);
+  const [slackCookies, setSlackCookies] = useState<SlackCookies | null>(null);
   const [intent, setIntent] = useState<ParsedIntent | null>(null);
   const [searchResults, setSearchResults] = useState<OpportunitySearchResult[]>([]);
   const [oppState, setOppState] = useState<OpportunityState | null>(null);
-  const [notes, setNotes] = useState<string>('');
   const [extraction, setExtraction] = useState<ClaudeExtraction | null>(null);
   const [missingFieldDetails, setMissingFieldDetails] = useState<Array<{
     apiName: string;
     displayName: string;
     description: string;
   }>>([]);
+  const [searchCriteria, setSearchCriteria] = useState<ProspectSearchCriteria | null>(null);
+  const [companyCandidates, setCompanyCandidates] = useState<CompanyCandidate[]>([]);
 
-  // Helper function to format session age
-  const formatSessionAge = (ageMs: number | null): string => {
-    if (ageMs === null) return 'unknown';
-
-    const minutes = Math.floor(ageMs / (1000 * 60));
-    const hours = Math.floor(ageMs / (1000 * 60 * 60));
-    const days = Math.floor(ageMs / (1000 * 60 * 60 * 24));
-
-    if (days > 0) return `${days}d ago`;
-    if (hours > 0) return `${hours}h ago`;
-    if (minutes > 0) return `${minutes}m ago`;
-    return 'just now';
-  };
-
-  // Handle checking saved session
-  const handleCheckSavedSession = async () => {
+  // Handle initial browser initialization
+  const handleInitializeBrowser = async () => {
     setScreen('checking-session');
-    setMessage('Checking for saved session...');
+    setMessage('Initializing browser...');
 
     try {
-      logger.info('Checking for saved session');
+      logger.info('Initializing browser on app startup');
+      await browser.initialize();
+      logger.info('Browser initialized successfully');
+      setScreen('main-menu');
+    } catch (err: any) {
+      logger.error('Failed to initialize browser', err);
+      setError(err.message || 'Failed to initialize browser');
+      setScreen('error');
+    }
+  };
 
-      // Try to authenticate with saved session
-      const sessionValid = await auth.authenticateWithSavedSession();
+  // Salesforce workflow handlers
+  const handleSalesforceAuth = async () => {
+    setScreen('salesforce-authenticating');
+    setMessage('Checking for saved Salesforce session...');
+
+    try {
+      const sessionValid = await salesforceAuth.authenticateWithSavedSession();
 
       if (sessionValid) {
-        // Session is valid, extract cookies and move to authenticated
-        const validCookies = auth.getCookies();
+        const validCookies = salesforceAuth.getCookies();
         if (validCookies) {
-          setCookies(validCookies);
-          setScreen('authenticated');
+          setSalesforceCookies(validCookies);
+          setScreen('salesforce-authenticated');
           setMessage('Successfully authenticated with saved session!');
           return;
         }
       }
 
-      // No valid session, fall back to browser authentication
-      logger.info('No valid saved session, falling back to browser auth');
-      await handleBrowserAuth();
+      // No saved session, show manual cookie input option
+      setScreen('salesforce-manual-cookie-input');
     } catch (err: any) {
-      logger.error('Error checking saved session', err);
-      // Fall back to browser authentication
-      await handleBrowserAuth();
-    }
-  };
-
-  // Handle browser-based authentication
-  const handleBrowserAuth = async () => {
-    setScreen('authenticating');
-    setMessage('Opening browser for Salesforce authentication...');
-
-    try {
-      logger.info('Starting browser-based authentication');
-
-      // Open browser and wait for user to authenticate, then extract cookies
-      const extractedCookies = await auth.waitForAuthenticationAndExtractCookies();
-
-      logger.info('Successfully extracted cookies', {
-        sid: extractedCookies.sid.substring(0, 20) + '...',
-        hasOid: !!extractedCookies.oid,
-        hasClientSrc: !!extractedCookies.clientSrc,
-        hasSidClient: !!extractedCookies.sid_Client
-      });
-
-      setCookies(extractedCookies);
-      setScreen('authenticated');
-      setMessage('✅ Successfully authenticated to Salesforce!');
-    } catch (err: any) {
-      logger.error('Browser authentication failed', err);
-      setError(err.message || 'Unknown authentication error');
+      logger.error('Salesforce authentication failed', err);
+      setError(err.message || 'Authentication failed');
       setScreen('error');
     }
   };
 
-  // Handle intent submission
+  const handleManualCookieSubmit = async (sid: string) => {
+    setScreen('salesforce-authenticating');
+    setMessage('Authenticating with provided SID cookie...');
+
+    try {
+      logger.info('Attempting authentication with manual SID cookie');
+      const cookies: SalesforceCookies = { sid };
+      await salesforceAuth.authenticate(cookies);
+
+      // Verify authentication
+      const isValid = await salesforceAuth.verifyAuthentication();
+
+      if (!isValid) {
+        throw new Error('Invalid SID cookie - authentication failed');
+      }
+
+      // Save cookies to session storage
+      salesforceSessionStorage.saveCookies(cookies);
+
+      setSalesforceCookies(cookies);
+      setScreen('salesforce-authenticated');
+      setMessage('Successfully authenticated with manual cookie!');
+    } catch (err: any) {
+      logger.error('Manual cookie authentication failed', err);
+      setError(err.message || 'Manual cookie authentication failed');
+      setScreen('error');
+    }
+  };
+
+  const handleManualCookieSkip = async () => {
+    setScreen('salesforce-authenticating');
+    setMessage('Opening browser for Salesforce authentication...');
+
+    try {
+      const extractedCookies = await salesforceAuth.waitForAuthenticationAndExtractCookies();
+      setSalesforceCookies(extractedCookies);
+      setScreen('salesforce-authenticated');
+      setMessage('Successfully authenticated to Salesforce!');
+    } catch (err: any) {
+      logger.error('Salesforce authentication failed', err);
+      setError(err.message || 'Authentication failed');
+      setScreen('error');
+    }
+  };
+
+  // Slack workflow handlers
+  const handleSlackAuth = async () => {
+    setScreen('slack-authenticating');
+    setMessage('Checking for saved Slack session...');
+
+    try {
+      const sessionValid = await slackAuth.authenticateWithSavedSession();
+
+      if (sessionValid) {
+        const validCookies = slackAuth.getCookies();
+        if (validCookies) {
+          setSlackCookies(validCookies);
+          setScreen('slack-authenticated');
+          setMessage('Successfully authenticated with saved session!');
+          return;
+        }
+      }
+
+      setMessage('Opening browser for Slack authentication...');
+      const extractedCookies = await slackAuth.waitForAuthenticationAndExtractCookies();
+      setSlackCookies(extractedCookies);
+      setScreen('slack-authenticated');
+      setMessage('Successfully authenticated to Slack!');
+    } catch (err: any) {
+      logger.error('Slack authentication failed', err);
+      setError(err.message || 'Authentication failed');
+      setScreen('error');
+    }
+  };
+
+  const handleFindAndClickPaul = async () => {
+    setScreen('finding-paul');
+    setMessage('Taking snapshot to find paul-d0...');
+
+    try {
+      const snapshot = await browser.getSnapshot();
+      logger.info('Snapshot retrieved', { refCount: Object.keys(snapshot.data.refs).length });
+
+      let foundRef: string | null = null;
+      for (const [ref, element] of Object.entries(snapshot.data.refs)) {
+        const name = (element as any).name?.toString().toLowerCase() || '';
+        const text = (element as any).text?.toString().toLowerCase() || '';
+
+        if (name.includes('paul-d0') || text.includes('paul-d0')) {
+          foundRef = ref;
+          logger.info('Found paul-d0', { ref, name, text });
+          break;
+        }
+      }
+
+      if (!foundRef) {
+        setError('Could not find paul-d0 element on the page');
+        setScreen('error');
+        return;
+      }
+
+      setMessage('Found paul-d0! Clicking...');
+      await browser.wait(500);
+      await browser.clickElement(`@${foundRef}`);
+      await browser.wait(1000);
+
+      setScreen('success');
+      setMessage('Successfully clicked on paul-d0!');
+      setTimeout(() => process.exit(0), 3000);
+    } catch (err: any) {
+      logger.error('Failed to find or click paul-d0', err);
+      setError(err.message || 'Failed to find or click paul-d0');
+      setScreen('error');
+    }
+  };
+
+  // LinkedIn workflow handlers
+  const handleLinkedInAuth = async () => {
+    setScreen('linkedin-authenticating');
+    setMessage('Checking for saved LinkedIn session...');
+
+    try {
+      const sessionValid = await linkedInAuth.authenticateWithSavedSession();
+
+      if (sessionValid) {
+        setScreen('linkedin-authenticated');
+        setMessage('Successfully authenticated with saved session!');
+        return;
+      }
+
+      setMessage('Opening browser for LinkedIn authentication...');
+      await linkedInAuth.waitForAuthenticationAndExtractCookies();
+      setScreen('linkedin-authenticated');
+      setMessage('Successfully authenticated to LinkedIn!');
+    } catch (err: any) {
+      logger.error('LinkedIn authentication failed', err);
+      setError(err.message || 'Authentication failed');
+      setScreen('error');
+    }
+  };
+
+  const handleProspectCriteriaSubmit = async (criteria: ProspectSearchCriteria) => {
+    setSearchCriteria(criteria);
+    setScreen('prospect-searching');
+    setMessage('Navigating to LinkedIn and performing search...');
+
+    try {
+      await prospector.navigateToLinkedInHome();
+
+      if (criteria.companyName) {
+        setMessage('Searching for company...');
+        await prospector.searchCompany(criteria.companyName);
+
+        setMessage('Extracting company candidates...');
+        const candidates = await prospector.extractCompanyCandidates();
+
+        if (candidates.length === 0) {
+          throw new Error(`No companies found for: ${criteria.companyName}`);
+        }
+
+        if (candidates.length === 1) {
+          await prospector.navigateToSelectedCompany(candidates[0]);
+          setScreen('success');
+          setMessage(`Successfully navigated to ${candidates[0].name}`);
+        } else {
+          setCompanyCandidates(candidates);
+          setScreen('company-selection');
+        }
+      }
+    } catch (err: any) {
+      logger.error('Company search failed', err);
+      setError(err.message || 'Search failed');
+      setScreen('error');
+    }
+  };
+
+  const handleCompanySelect = async (candidate: CompanyCandidate) => {
+    setScreen('prospect-searching');
+    setMessage(`Navigating to ${candidate.name}...`);
+
+    try {
+      await prospector.navigateToSelectedCompany(candidate);
+      setScreen('success');
+      setMessage(`Successfully navigated to ${candidate.name}`);
+    } catch (err: any) {
+      logger.error('Company navigation failed', err);
+      setError(err.message || 'Navigation failed');
+      setScreen('error');
+    }
+  };
+
+  // Salesforce opportunity workflow
   const handleIntentSubmit = async (userIntent: string) => {
     setScreen('parsing-intent');
     setMessage('Understanding your request...');
 
     try {
-      logger.info('Parsing user intent', { intent: userIntent });
-
-      // Parse intent with Claude
       const parsedIntent = await intentParser.parseIntent(userIntent);
-
-      logger.info('Intent parsed', {
-        action: parsedIntent.action,
-        confidence: parsedIntent.confidence,
-        opportunityIdentifier: parsedIntent.opportunityIdentifier
-      });
-
       setIntent(parsedIntent);
 
       if (parsedIntent.action === 'unclear') {
@@ -173,12 +363,11 @@ export default function App({ apiKey }: AppProps) {
       }
 
       if (parsedIntent.action === 'update_opportunity' && parsedIntent.opportunityIdentifier) {
-        // Search for the opportunity
         setScreen('searching');
         setMessage(`Searching for "${parsedIntent.opportunityIdentifier}"...`);
 
         const results = await search.getCurrentOpportunities();
-        const matches = results.filter(r =>
+        const matches = results.filter((r: OpportunitySearchResult) =>
           r.name.toLowerCase().includes(parsedIntent.opportunityIdentifier!.toLowerCase())
         );
 
@@ -189,204 +378,41 @@ export default function App({ apiKey }: AppProps) {
         }
 
         if (matches.length === 1) {
-          // Only one match, proceed with it
           await handleOpportunityLoad(matches[0], parsedIntent);
         } else {
-          // Multiple matches, ask user to choose
           setSearchResults(matches);
           setScreen('opp-selection');
         }
-      } else if (parsedIntent.action === 'create_opportunity') {
-        setMessage('Creating new opportunity...');
-        setError('Opportunity creation not yet implemented');
-        setScreen('error');
       }
     } catch (err: any) {
       logger.error('Failed to process intent', err);
-      setError(err.message || 'Failed to process your request');
+      setError(err.message || 'Failed to process request');
       setScreen('error');
     }
   };
 
-  // Handle applying updates to Salesforce
-  const handleApplyUpdates = async () => {
-    if (!extraction || !oppState) return;
-
-    setScreen('updating');
-    setMessage('Applying updates to Salesforce...');
-
-    try {
-      logger.info('Applying field updates', {
-        fieldCount: extraction.fieldUpdates.length,
-        hasStageChange: !!extraction.stageChange
-      });
-
-      // Update all fields
-      if (extraction.fieldUpdates.length > 0) {
-        logger.info('Updating fields in Salesforce', {
-          fields: extraction.fieldUpdates.map(u => u.field)
-        });
-        await updater.updateFields(extraction.fieldUpdates);
-      }
-
-      // Update stage if changed
-      if (extraction.stageChange) {
-        logger.info('Updating stage', {
-          from: extraction.stageChange.from,
-          to: extraction.stageChange.to
-        });
-        await updater.updateStage(extraction.stageChange.to);
-      }
-
-      // Save all changes
-      logger.info('Saving changes to Salesforce');
-      await updater.saveChanges();
-
-      // Wait a moment for save to complete
-      await browser.wait(2000);
-
-      logger.info('Updates applied successfully');
-      setMessage('✅ Successfully updated opportunity!');
-      setScreen('success');
-
-      // Auto-exit after success
-      setTimeout(() => {
-        process.exit(0);
-      }, 3000);
-    } catch (error: any) {
-      logger.error('Failed to apply updates', error);
-      setError(error.message || 'Failed to apply updates to Salesforce');
-      setScreen('error');
-    }
-  };
-
-  // Handle missing fields submission
-  const handleMissingFieldsSubmit = (fieldValues: Record<string, string>) => {
-    if (!extraction || !oppState) return;
-
-    logger.info('Missing fields provided by user', {
-      fieldCount: Object.keys(fieldValues).length,
-      fields: Object.keys(fieldValues)
-    });
-
-    // Add the user-provided fields to the extraction
-    const newFieldUpdates = Object.entries(fieldValues).map(([apiName, value]) => {
-      const fieldDetail = missingFieldDetails.find(f => f.apiName === apiName);
-      return {
-        field: apiName,
-        value: value,
-        confidence: 'high' as const,
-        source: 'User provided during stage transition'
-      };
-    });
-
-    const updatedExtraction = {
-      ...extraction,
-      fieldUpdates: [...extraction.fieldUpdates, ...newFieldUpdates]
-    };
-
-    // Re-validate with the new fields
-    if (updatedExtraction.stageChange) {
-      const validationResult = validator.validateStageTransition(
-        updatedExtraction.stageChange.from,
-        updatedExtraction.stageChange.to,
-        oppState.fields,
-        updatedExtraction.fieldUpdates
-      );
-
-      logger.info('Re-validation after user input', {
-        isValid: validationResult.isValid,
-        missingFieldsCount: validationResult.missingFields.length
-      });
-
-      // Update missing fields list
-      updatedExtraction.missingFields = validationResult.missingFields;
-    }
-
-    setExtraction(updatedExtraction);
-    setScreen('preview');
-  };
-
-  // Handle loading a specific opportunity
   const handleOpportunityLoad = async (opp: OpportunitySearchResult, parsedIntent: ParsedIntent) => {
     setScreen('loading-opp');
     setMessage(`Loading ${opp.name}...`);
 
     try {
-      logger.info('Loading opportunity', { name: opp.name, ref: opp.id });
-
-      // Click on the opportunity to open it
       await search.clickOpportunity(opp.id);
-
-      // Extract current state
-      logger.info('Extracting opportunity state');
       const currentState = await extractor.extractOpportunityState();
-
-      logger.info('Opportunity loaded', {
-        id: currentState.id,
-        name: currentState.name,
-        stage: currentState.stage,
-        fields: currentState.fields
-      });
-
       setOppState(currentState);
 
-      // If stage is Unknown, we can't proceed (but name being Unknown is okay)
       if (currentState.stage === 'Unknown') {
-        logger.warn('Failed to extract opportunity stage from page', {
-          stage: currentState.stage,
-          name: currentState.name,
-          id: currentState.id
-        });
-        setError('Could not automatically detect the opportunity stage from the Salesforce page. Please check that the Stage field is visible in the browser, then try again.');
+        setError('Could not automatically detect the opportunity stage.');
         setScreen('error');
         return;
       }
 
-      // Log if name is Unknown but proceed anyway
-      if (currentState.name === 'Unknown') {
-        logger.info('Opportunity name not extracted but stage found - proceeding', {
-          stage: currentState.stage,
-          id: currentState.id
-        });
-      }
-
-      // Now process the intent
       const hasInformation = parsedIntent.information && parsedIntent.information.trim().length > 0;
-      const hasStageTransition = parsedIntent.stageTransition;
-
-      if (hasInformation || hasStageTransition) {
+      if (hasInformation) {
         setScreen('processing');
         setMessage('Processing your request with Claude AI...');
 
-        // Build information string from intent
-        let informationToProcess = parsedIntent.information || '';
+        const claudeExtraction = await parser.parseNotes(parsedIntent.information!, currentState);
 
-        // If there's a stage transition but no information, synthesize information
-        if (hasStageTransition && !hasInformation) {
-          if (parsedIntent.stageTransition?.direction === 'next') {
-            informationToProcess = 'Move to the next stage.';
-          } else if (parsedIntent.stageTransition?.targetStage) {
-            informationToProcess = `Move to ${parsedIntent.stageTransition.targetStage}.`;
-          }
-        }
-
-        logger.info('Parsing information from intent', {
-          informationLength: informationToProcess.length,
-          currentStage: currentState.stage,
-          hasStageTransition: !!hasStageTransition
-        });
-
-        // Parse the information with Claude
-        const claudeExtraction = await parser.parseNotes(informationToProcess, currentState);
-
-        logger.info('Claude extraction complete', {
-          fieldUpdates: claudeExtraction.fieldUpdates.length,
-          stageChange: !!claudeExtraction.stageChange,
-          missingFields: claudeExtraction.missingFields.length
-        });
-
-        // Validate stage transition if one is proposed
         if (claudeExtraction.stageChange) {
           const validationResult = validator.validateStageTransition(
             claudeExtraction.stageChange.from,
@@ -395,30 +421,11 @@ export default function App({ apiKey }: AppProps) {
             claudeExtraction.fieldUpdates
           );
 
-          logger.info('Stage gate validation complete', {
-            isValid: validationResult.isValid,
-            missingFieldsCount: validationResult.missingFields.length,
-            warningsCount: validationResult.warnings.length
-          });
-
-          // Add validation warnings to suggestions
           if (validationResult.warnings.length > 0) {
-            claudeExtraction.suggestions = [
-              ...claudeExtraction.suggestions,
-              ...validationResult.warnings
-            ];
+            claudeExtraction.suggestions = [...claudeExtraction.suggestions, ...validationResult.warnings];
           }
 
-          // Update missing fields with stage-gate requirements
           if (validationResult.missingFields.length > 0) {
-            // Merge with Claude's missing fields (avoiding duplicates)
-            const allMissingFields = new Set([
-              ...claudeExtraction.missingFields,
-              ...validationResult.missingFields
-            ]);
-            claudeExtraction.missingFields = Array.from(allMissingFields);
-
-            // Get the full field details for the missing fields
             const stageGateRule = validator.getStageGateRule(
               claudeExtraction.stageChange.from,
               claudeExtraction.stageChange.to
@@ -429,25 +436,17 @@ export default function App({ apiKey }: AppProps) {
                 validationResult.missingFields.includes(field.displayName)
               );
               setMissingFieldDetails(missingFieldObjects);
-
-              // Show missing fields input screen instead of preview
               setExtraction(claudeExtraction);
               setScreen('missing-fields');
               return;
             }
           } else if (validationResult.isValid) {
-            // Validation passed - clear any missing fields that Claude reported
-            // since the validator confirmed all required fields are present
             claudeExtraction.missingFields = [];
           }
         }
 
         setExtraction(claudeExtraction);
         setScreen('preview');
-      } else {
-        // No information provided, just show the loaded opportunity
-        setMessage(`Loaded ${currentState.name}. What would you like to update?`);
-        setScreen('intent-input'); // Go back to intent input for more instructions
       }
     } catch (err: any) {
       logger.error('Failed to load opportunity', err);
@@ -456,86 +455,122 @@ export default function App({ apiKey }: AppProps) {
     }
   };
 
-  // Handle keyboard input
+  const handleMissingFieldsSubmit = (fieldValues: Record<string, string>) => {
+    if (!extraction || !oppState) return;
+
+    const newFieldUpdates = Object.entries(fieldValues).map(([apiName, value]) => ({
+      field: apiName,
+      value: value,
+      confidence: 'high' as const,
+      source: 'User provided during stage transition'
+    }));
+
+    const updatedExtraction = {
+      ...extraction,
+      fieldUpdates: [...extraction.fieldUpdates, ...newFieldUpdates]
+    };
+
+    if (updatedExtraction.stageChange) {
+      const validationResult = validator.validateStageTransition(
+        updatedExtraction.stageChange.from,
+        updatedExtraction.stageChange.to,
+        oppState.fields,
+        updatedExtraction.fieldUpdates
+      );
+
+      updatedExtraction.missingFields = validationResult.missingFields;
+    }
+
+    setExtraction(updatedExtraction);
+    setScreen('preview');
+  };
+
+  const handleApplyUpdates = async () => {
+    if (!extraction || !oppState) return;
+
+    setScreen('updating');
+    setMessage('Applying updates to Salesforce...');
+
+    try {
+      if (extraction.fieldUpdates.length > 0) {
+        await updater.updateFields(extraction.fieldUpdates);
+      }
+
+      if (extraction.stageChange) {
+        await updater.updateStage(extraction.stageChange.to);
+      }
+
+      await updater.saveChanges();
+      await browser.wait(2000);
+
+      setMessage('Successfully updated opportunity!');
+      setScreen('success');
+      setTimeout(() => process.exit(0), 3000);
+    } catch (error: any) {
+      logger.error('Failed to apply updates', error);
+      setError(error.message || 'Failed to apply updates');
+      setScreen('error');
+    }
+  };
+
+  // Main menu selection
+  const handleMainMenuSelect = (option: 'prospecting' | 'salesforce' | 'slack') => {
+    setWorkflow(option);
+    if (option === 'prospecting') {
+      handleLinkedInAuth();
+    } else if (option === 'salesforce') {
+      handleSalesforceAuth();
+    } else if (option === 'slack') {
+      handleSlackAuth();
+    }
+  };
+
+  // Keyboard input handling
   useInput((input, key) => {
     if (screen === 'welcome') {
-      // Check for 'c' key to clear saved session
       if (input === 'c' || input === 'C') {
-        auth.clearSavedSession();
-        setMessage('Saved session cleared. Press any key to login...');
+        salesforceAuth.clearSavedSession();
+        slackAuth.clearSavedSession();
+        linkedInAuth.clearSavedSession();
+        setMessage('Saved sessions cleared. Press any key to continue...');
       } else {
-        // Any other key tries to load saved session or falls back to browser auth
-        handleCheckSavedSession();
+        handleInitializeBrowser();
       }
-    } else if (screen === 'authenticated') {
-      // Any key moves to intent input
+    } else if (screen === 'salesforce-authenticated') {
       setScreen('intent-input');
+    } else if (screen === 'slack-authenticated') {
+      handleFindAndClickPaul();
+    } else if (screen === 'linkedin-authenticated') {
+      setScreen('prospect-criteria-input');
     } else if (screen === 'preview' && !extraction?.missingFields?.length) {
-      // On preview screen with no missing fields, Enter to apply updates
       if (key.return) {
         handleApplyUpdates();
       }
     } else if (key.escape || (key.ctrl && input === 'c')) {
-      // Ctrl+C or ESC to exit
       process.exit(0);
     }
   });
 
+  // Render screens
   if (screen === 'welcome') {
-    const hasSession = sessionStorage.sessionExists();
-    const sessionAge = sessionStorage.getSessionAge();
-    const sessionAgeFormatted = formatSessionAge(sessionAge);
-
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">
-          ╔════════════════════════════════════════════╗
-        </Text>
-        <Text bold color="cyan">
-          ║   Vercel Sales Agent - AI-Powered TUI     ║
-        </Text>
-        <Text bold color="cyan">
-          ╚════════════════════════════════════════════╝
-        </Text>
+        <Text bold color="cyan">╔════════════════════════════════════════════╗</Text>
+        <Text bold color="cyan">║   Vercel Sales Agent - AI-Powered TUI     ║</Text>
+        <Text bold color="cyan">╚════════════════════════════════════════════╝</Text>
         <Box marginTop={1}>
-          <Text>
-            This tool helps automate Salesforce opportunity updates using natural language.
-          </Text>
+          <Text>AI-powered TUI for Salesforce automation, Slack automation, and LinkedIn prospecting.</Text>
         </Box>
-        {hasSession ? (
-          <>
-            <Box marginTop={1}>
-              <Text color="green">
-                Found saved session (saved {sessionAgeFormatted})
-              </Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text dimColor>
-                Press any key to restore session, or press 'c' to clear and login again.
-              </Text>
-            </Box>
-          </>
-        ) : (
-          <>
-            <Box marginTop={1}>
-              <Text dimColor>
-                {message || 'When you press any key, a Chrome browser will open to Salesforce.'}
-              </Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text dimColor>
-                Please log in with your Okta credentials. Once authenticated,
-                the app will automatically save your session for future use.
-              </Text>
-            </Box>
-          </>
+        {message && (
+          <Box marginTop={1}>
+            <Text color="green">{message}</Text>
+          </Box>
         )}
+        <Box marginTop={2}>
+          <Text color="yellow">Press any key to continue...</Text>
+        </Box>
         <Box marginTop={1}>
-          <Text color="yellow">
-            {hasSession
-              ? 'Press any key to continue...'
-              : 'Press any key to open browser and authenticate...'}
-          </Text>
+          <Text dimColor>Press 'c' to clear saved sessions</Text>
         </Box>
       </Box>
     );
@@ -544,94 +579,108 @@ export default function App({ apiKey }: AppProps) {
   if (screen === 'checking-session') {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold color="cyan">Checking Saved Session</Text>
+        <Text bold color="cyan">{message}</Text>
+      </Box>
+    );
+  }
+
+  if (screen === 'main-menu') {
+    return <MainMenu onSelect={handleMainMenuSelect} />;
+  }
+
+  if (screen === 'salesforce-authenticating' || screen === 'slack-authenticating' || screen === 'linkedin-authenticating') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text color="cyan">{message}</Text>
         <Box marginTop={1}>
-          <Text dimColor>{message}</Text>
+          <Text dimColor>Please log in in the browser window...</Text>
         </Box>
       </Box>
     );
   }
 
-  if (screen === 'error') {
+  if (screen === 'salesforce-manual-cookie-input') {
     return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="red">
-          ❌ Error
-        </Text>
-        <Box marginTop={1}>
-          <Text color="red">{error}</Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>Check the logs for more details: vercel-sales-agent.log</Text>
-        </Box>
-      </Box>
+      <ManualCookieInput
+        onSubmit={handleManualCookieSubmit}
+        onSkip={handleManualCookieSkip}
+      />
     );
   }
 
-  if (screen === 'authenticating' || screen === 'parsing-intent' || screen === 'searching' || screen === 'loading-opp' || screen === 'processing' || screen === 'updating') {
+  if (screen === 'salesforce-authenticated') {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="cyan">⏳ {message}</Text>
-        {screen === 'authenticating' && (
-          <Box marginTop={1}>
-            <Text dimColor>Please log in with your Okta credentials in the browser window...</Text>
-          </Box>
-        )}
-      </Box>
-    );
-  }
-
-  if (screen === 'success') {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="green">
-          ✅ Success!
-        </Text>
+        <Text bold color="green">Salesforce Authentication Successful!</Text>
         <Box marginTop={1}>
           <Text>{message}</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (screen === 'authenticated') {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="green">✅ Authentication Successful!</Text>
-        <Box marginTop={1}>
-          <Text>{message}</Text>
-        </Box>
-        <Box marginTop={2}>
-          <Text bold>Extracted Cookies:</Text>
-        </Box>
-        <Box marginTop={1} flexDirection="column">
-          <Text>✓ sid: {cookies?.sid.substring(0, 30)}...</Text>
-          {cookies?.oid && <Text>✓ oid: {cookies.oid}</Text>}
-          {cookies?.clientSrc && <Text>✓ clientSrc: {cookies.clientSrc}</Text>}
-          {cookies?.sid_Client && <Text>✓ sid_Client: {cookies.sid_Client}</Text>}
-        </Box>
-        <Box marginTop={2}>
-          <Text bold>Services Available:</Text>
-        </Box>
-        <Box marginTop={1} flexDirection="column">
-          <Text>✓ Browser automation (agent-browser wrapper)</Text>
-          <Text>✓ Field extraction service</Text>
-          <Text>✓ Field updater service</Text>
-          <Text>✓ Claude AI parser (57 field mappings)</Text>
-          <Text>✓ Stage-gate validator (6 transitions)</Text>
         </Box>
         <Box marginTop={2}>
           <Text color="yellow">Press any key to continue...</Text>
         </Box>
+      </Box>
+    );
+  }
+
+  if (screen === 'slack-authenticated') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="green">Slack Authentication Successful!</Text>
         <Box marginTop={1}>
-          <Text dimColor>You'll be able to describe what you want to do in natural language</Text>
+          <Text>{message}</Text>
         </Box>
+        <Box marginTop={2}>
+          <Text color="yellow">Press any key to find and click paul-d0...</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === 'linkedin-authenticated') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="green">LinkedIn Authentication Successful!</Text>
+        <Box marginTop={1}>
+          <Text>{message}</Text>
+        </Box>
+        <Box marginTop={2}>
+          <Text color="yellow">Press any key to continue...</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === 'finding-paul' || screen === 'parsing-intent' || screen === 'searching' || screen === 'loading-opp' || screen === 'processing' || screen === 'updating' || screen === 'prospect-searching') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text color="cyan">{message}</Text>
       </Box>
     );
   }
 
   if (screen === 'intent-input') {
     return <IntentInput onSubmit={handleIntentSubmit} />;
+  }
+
+  if (screen === 'prospect-criteria-input') {
+    return (
+      <ProspectCriteriaInput
+        onSubmit={handleProspectCriteriaSubmit}
+        defaultJobTitles={config.prospecting?.defaultJobTitles}
+        defaultCompanyName={config.prospecting?.defaultCompanyName}
+        defaultKeywords={config.prospecting?.defaultKeywords}
+      />
+    );
+  }
+
+  if (screen === 'company-selection') {
+    return (
+      <CompanySelector
+        candidates={companyCandidates}
+        onSelect={handleCompanySelect}
+        onCancel={() => setScreen('prospect-criteria-input')}
+      />
+    );
   }
 
   if (screen === 'opp-selection' && searchResults.length > 0 && intent) {
@@ -672,11 +721,6 @@ export default function App({ apiKey }: AppProps) {
               Stage Change: {extraction.stageChange.from} → {extraction.stageChange.to}
             </Text>
             <Text dimColor>Reason: {extraction.stageChange.reason}</Text>
-            {hasValidationIssues && (
-              <Box marginTop={1}>
-                <Text color="red">⚠️  Cannot proceed: Missing required fields for this stage transition</Text>
-              </Box>
-            )}
           </Box>
         )}
         {extraction.fieldUpdates.length > 0 && (
@@ -688,65 +732,46 @@ export default function App({ apiKey }: AppProps) {
               <Box key={update.field} marginTop={1}>
                 <Text>• {update.field}: </Text>
                 <Text color="green">{JSON.stringify(update.value)}</Text>
-                <Text dimColor> (confidence: {update.confidence})</Text>
               </Box>
             ))}
           </>
         )}
-        {extraction.missingFields.length > 0 && (
-          <Box marginTop={2} flexDirection="column">
-            <Text bold color="red">⚠️  Missing Required Fields ({extraction.missingFields.length}):</Text>
-            <Box marginTop={1} flexDirection="column">
-              {extraction.missingFields.map((field) => (
-                <Text key={field} color="red">  • {field}</Text>
-              ))}
-            </Box>
-            <Box marginTop={1}>
-              <Text color="yellow">
-                These fields must be populated before moving to the target stage.
-              </Text>
-            </Box>
-          </Box>
-        )}
-        {extraction.suggestions.length > 0 && (
-          <Box marginTop={2} flexDirection="column">
-            <Text bold color="yellow">Validation Warnings & Suggestions:</Text>
-            <Box marginTop={1} flexDirection="column">
-              {extraction.suggestions.map((suggestion, idx) => (
-                <Text key={`suggestion-${idx}`} dimColor>  • {suggestion}</Text>
-              ))}
-            </Box>
-          </Box>
-        )}
         <Box marginTop={2}>
           <Text dimColor>
             {hasValidationIssues
-              ? 'Update blocked - resolve missing fields first. Press Ctrl+C to exit'
-              : 'Press Enter to apply these changes to Salesforce, or Ctrl+C to cancel'}
+              ? 'Update blocked - resolve missing fields first'
+              : 'Press Enter to apply these changes, or Ctrl+C to cancel'}
           </Text>
         </Box>
       </Box>
     );
   }
 
-  // Default message for other screens
+  if (screen === 'success') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="green">Success!</Text>
+        <Box marginTop={1}>
+          <Text>{message}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen === 'error') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="red">Error</Text>
+        <Box marginTop={1}>
+          <Text color="red">{error}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" padding={1}>
       <Text>Screen: {screen}</Text>
-      <Text dimColor>
-        This is a simplified implementation. Full TUI components coming soon.
-      </Text>
-      <Box marginTop={1}>
-        <Text color="yellow">
-          To use this tool:
-          1. Set ANTHROPIC_API_KEY environment variable
-          2. Extract Salesforce cookies from your browser
-          3. Run: npm start
-        </Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>Press ESC or Ctrl+C to exit</Text>
-      </Box>
     </Box>
   );
 }

@@ -1,16 +1,22 @@
 # Vercel Sales Agent
 
-AI-powered TUI for common sales workflows, starting with automating Salesforce opportunity management using Claude AI and natural language processing.
-
-More features to come.
+AI-powered TUI for common sales workflows, including Salesforce automation and LinkedIn prospecting.
 
 ## Overview
 
-This tool helps sales teams at Vercel automate Salesforce opportunity updates by:
-- Parsing natural language call notes
-- Extracting relevant field updates using Claude AI
-- Validating stage-gate requirements
-- Automatically updating Salesforce opportunities via browser automation
+This tool helps sales teams at Vercel automate sales workflows:
+
+**Salesforce Automation:**
+- Parse natural language call notes
+- Extract relevant field updates using Claude AI
+- Validate stage-gate requirements
+- Automatically update Salesforce opportunities via browser automation
+
+**LinkedIn Prospecting:**
+- Search LinkedIn with customizable criteria
+- Extract prospect data automatically
+- Score prospects using Claude AI (0-100 relevance score)
+- Export results to CSV or JSON
 
 ## How It Works
 
@@ -20,11 +26,21 @@ This tool uses browser automation instead of the Salesforce API, making it acces
 
 ## Features
 
+### Salesforce Automation
+
 - **AI-Powered Extraction**: Uses Claude to intelligently extract Salesforce fields from call notes
 - **Stage-Gate Validation**: Enforces Vercel's opportunity stage requirements
-- **Secure Authentication**: Uses browser cookies for Salesforce authentication
+- **Secure Authentication**: Session-based authentication (cookies saved locally)
 - **Natural Language**: Write notes naturally - AI handles the field mapping
 - **Preview & Confirm**: Review all changes before applying to Salesforce
+
+### LinkedIn Prospecting
+
+- **LinkedIn Integration**: Automated search and extraction from LinkedIn people search
+- **AI-Based Scoring**: Claude evaluates prospects on 5 criteria (title match, seniority, company relevance, keywords, experience)
+- **Customizable Searches**: Filter by company, job titles, keywords, and more
+- **Multiple Export Formats**: Export scored prospects to CSV or JSON
+- **Smart Ranking**: Results sorted by relevance score (0-100)
 
 ## Quick Start
 
@@ -35,7 +51,8 @@ Get up and running in 5 minutes.
 - Node.js v18+ (tested with v25.2.1)
 - agent-browser installed globally: `npm install -g agent-browser`
 - Anthropic API key for Claude
-- Active Salesforce session cookies
+- For Salesforce automation: Active Salesforce session
+- For LinkedIn prospecting: LinkedIn account
 
 ### Step 1: Installation
 
@@ -53,7 +70,71 @@ echo "ANTHROPIC_API_KEY=your_actual_key_here" > .env
 
 Get your API key from: https://console.anthropic.com/
 
-### Step 3: Extract Salesforce Cookies
+### Step 3: (Optional) Configure Custom Browser Path
+
+If Chrome/Chromium is installed in a non-standard location, create a config file:
+
+```bash
+cp .vercel-sales-agent.config.example.json .vercel-sales-agent.config.json
+```
+
+Edit `.vercel-sales-agent.config.json` and set your browser path:
+
+```json
+{
+  "browser": {
+    "executablePath": "/usr/bin/chromium"
+  }
+}
+```
+
+**Common paths:**
+- macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+- Linux (Chrome): `/usr/bin/google-chrome`
+- Linux (Chromium): `/usr/bin/chromium` or `/usr/bin/chromium-browser`
+- Windows: `C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe`
+
+**Alternative: Environment Variable**
+
+You can also set the browser path via environment variable:
+```bash
+export AGENT_BROWSER_EXECUTABLE_PATH="/path/to/chrome"
+```
+
+If not configured, agent-browser will use the default Chrome/Chromium installation.
+
+### Step 3.5: (Optional) Configure Default Prospecting Criteria
+
+If you frequently search for the same job titles or keywords, you can configure defaults to pre-fill the search form.
+
+Edit `.vercel-sales-agent.config.json`:
+
+```json
+{
+  "browser": {
+    "executablePath": "/usr/bin/chromium"
+  },
+  "prospecting": {
+    "defaultJobTitles": ["CTO", "VP Engineering", "Head of Infrastructure"],
+    "defaultCompanyName": "",
+    "defaultKeywords": ["kubernetes", "cloud", "DevOps"]
+  }
+}
+```
+
+**Benefits:**
+- Job titles and keywords pre-fill in the search form
+- Reduces repetitive typing for common searches
+- Can still edit or override values for one-off searches
+
+**Configuration options:**
+- `defaultJobTitles` (array): Job titles to search for (pre-fills the required field)
+- `defaultCompanyName` (string): Company name to search within (optional)
+- `defaultKeywords` (array): Keywords to filter prospects (optional)
+
+**Note:** All prospecting config fields are optional. If not configured, the search form will be empty as before.
+
+### Step 4: Extract Salesforce Cookies
 
 You need cookies from an active Salesforce session. Choose one method:
 
@@ -159,6 +240,45 @@ npm start
 6. **Confirm and apply**
    - Changes are applied to Salesforce
    - Verification and success message
+
+### LinkedIn Prospecting Workflow
+
+1. **Start the application**
+   ```bash
+   npm start
+   ```
+
+2. **Select workflow**
+   - Choose "Prospecting & List Building" from the main menu
+
+3. **Authenticate with LinkedIn**
+   - First time: Browser opens to LinkedIn.com
+   - Log in to LinkedIn
+   - Session is saved for future use (7 days)
+
+4. **Enter search criteria**
+   - If configured in Step 3.5, fields will be pre-filled with default values
+   - Company Name (optional): Target company
+   - Job Titles (required): "CTO, VP Engineering, Head of Infrastructure"
+   - Keywords (optional): "kubernetes, cloud, DevOps"
+   - Press Enter to accept defaults or edit to override for this search
+
+5. **Review scored results**
+   - AI scores each prospect (0-100) on relevance
+   - See score breakdown: title match, seniority, company fit, keywords, experience
+   - Results sorted by score (highest first)
+
+6. **Export results**
+   - Press 'c' to export as CSV
+   - Press 'j' to export as JSON
+   - Files saved to `exports/prospects-{timestamp}.csv`
+
+**Example CSV Output:**
+
+| Name | Title | Company | Score | Reasoning |
+|------|-------|---------|-------|-----------|
+| Sarah Johnson | CTO | Acme Corp | 95 | Strong match: CTO at target company with cloud expertise |
+| Mike Chen | VP Engineering | TechStart | 85 | VP-level with relevant infrastructure background |
 
 ### Example Output (Once Full TUI is Complete)
 
@@ -369,6 +489,51 @@ agent-browser install
 ### "agent-browser command failed"
 - Ensure agent-browser is installed: `npm list -g agent-browser`
 - Check if Chromium is installed: `agent-browser install`
+- If Chrome/Chromium is in a non-standard location, configure the path (see Step 3)
+
+### "Browser not found" or Chrome launch fails
+If you see errors about Chrome not being found:
+
+1. Create `.vercel-sales-agent.config.json`:
+   ```bash
+   cp .vercel-sales-agent.config.example.json .vercel-sales-agent.config.json
+   ```
+
+2. Find your browser path:
+   ```bash
+   # macOS
+   which google-chrome
+   # or: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+
+   # Linux
+   which google-chrome
+   which chromium
+   which chromium-browser
+   ```
+
+3. Edit the config file with your browser path
+
+4. **Important**: Close any existing agent-browser daemon:
+   ```bash
+   npx agent-browser close
+   ```
+   The agent-browser daemon must be restarted to use a new executable path.
+
+### "Custom browser path not being used"
+
+If logs show "Chrome for Testing" instead of your custom browser:
+
+1. Close the agent-browser daemon:
+   ```bash
+   npx agent-browser close
+   ```
+
+2. Verify your config file exists and has the correct path:
+   ```bash
+   cat .vercel-sales-agent.config.json
+   ```
+
+3. Restart the app - it will automatically close and restart the daemon with your custom browser
 
 ### "No API key found"
 - Verify `.env` file exists with `ANTHROPIC_API_KEY`

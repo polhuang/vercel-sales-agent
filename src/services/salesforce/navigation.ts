@@ -1,4 +1,4 @@
-import { AgentBrowserService } from './browser.js';
+import { AgentBrowserService } from '../browser/index.js';
 
 export class NavigationService {
   private browser: AgentBrowserService;

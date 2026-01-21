@@ -7,15 +7,23 @@ dist/
 # Environment variables
 .env
 
+# Configuration
+.vercel-sales-agent.config.json
+
 # Logs
 *.log
 vercel-sales-agent.log
 
 # Session files
 .sf-session.json
+.linkedin-session.json
+.chatgpt-session.json
 
 # Debug screenshots
 debug/
+
+# Exports
+exports/
 
 # OS files
 .DS_Store

@@ -1,4 +1,4 @@
-import { AgentBrowserService } from './browser.js';
+import { AgentBrowserService } from '../browser/index.js';
 import { OpportunityState } from '../../types/opportunity.js';
 import { logger } from '../../utils/logger.js';
 import { ClaudeClient } from '../claude/client.js';
