@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { Select } from '@inkjs/ui';
 
 interface MainMenuProps {
-	onSelect: (option: 'prospecting' | 'salesforce' | 'slack') => void;
+	onSelect: (option: 'prospecting' | 'salesforce') => void;
 }
 
 export function MainMenu({ onSelect }: MainMenuProps) {
@@ -16,14 +16,10 @@ export function MainMenu({ onSelect }: MainMenuProps) {
 			label: 'Salesforce Automation',
 			value: 'salesforce',
 		},
-		{
-			label: 'Slack Automation',
-			value: 'slack',
-		},
 	];
 
 	const handleChange = (value: string) => {
-		if (value === 'prospecting' || value === 'salesforce' || value === 'slack') {
+		if (value === 'prospecting' || value === 'salesforce') {
 			onSelect(value);
 		}
 	};
@@ -40,7 +36,7 @@ export function MainMenu({ onSelect }: MainMenuProps) {
 				<Select
 					options={options}
 					onChange={handleChange}
-					visibleOptionCount={3}
+					visibleOptionCount={2}
 				/>
 			</Box>
 			<Box marginTop={2}>

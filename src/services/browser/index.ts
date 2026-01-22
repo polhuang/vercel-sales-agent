@@ -194,10 +194,19 @@ export class AgentBrowserService {
               headful: shouldUseHeaded,
               customExecutable: shouldAddExecutablePath ? this.executablePath : undefined
             });
+
+            // Wait longer after initial browser launch to ensure daemon is stable
+            logger.debug('Waiting for browser to stabilize after launch');
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
 
           return stdout;
         } catch (error: any) {
+          // Check if this is an "execution context destroyed" error
+          const isContextDestroyedError =
+            error.stderr?.includes('Execution context was destroyed') ||
+            error.message?.includes('Execution context was destroyed');
+
           // Log the error details
           logger.error('agent-browser command failed', {
             command: command,
@@ -206,8 +215,15 @@ export class AgentBrowserService {
             exitCode: error.exitCode,
             message: error.message,
             stderr: error.stderr,
-            stdout: error.stdout
+            stdout: error.stdout,
+            isContextDestroyedError
           });
+
+          // For execution context errors, wait longer before retry
+          if (isContextDestroyedError) {
+            logger.warn('Execution context destroyed, waiting 3s before retry');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
 
           // Take screenshot on error for debugging
           if (error.exitCode !== 0) {
@@ -234,7 +250,41 @@ export class AgentBrowserService {
    * Navigate to URL
    */
   async navigate(url: string): Promise<void> {
-    await this.exec('open', [url]);
+    // If browser is already running, add a small wait before navigation
+    // to ensure any previous page operations have completed
+    if (this.browserLaunched) {
+      logger.debug('Browser already running, waiting before navigation', { url });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    try {
+      await this.exec('open', [url]);
+    } catch (error: any) {
+      // If this is a context destroyed error during navigation to Slack,
+      // it might still have navigated successfully
+      const isContextError =
+        error.stderr?.includes('Execution context was destroyed') ||
+        error.message?.includes('Execution context was destroyed');
+
+      if (isContextError && url.includes('slack.com')) {
+        logger.warn('Context destroyed during Slack navigation, waiting and verifying');
+        // Wait for page to stabilize
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Check if we actually made it to Slack
+        try {
+          const currentUrl = await this.getCurrentUrl();
+          if (currentUrl.includes('slack.com')) {
+            logger.info('Navigation to Slack succeeded despite context error', { currentUrl });
+            return;
+          }
+        } catch {
+          // If we can't get URL, re-throw original error
+        }
+      }
+
+      throw error;
+    }
   }
 
   /**

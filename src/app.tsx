@@ -1,11 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { AgentBrowserService } from './services/slack/browser.js';
+import { AgentBrowserService } from './services/browser/index.js';
 import { loadConfig } from './utils/config.js';
 import { AuthService as SalesforceAuthService } from './services/salesforce/auth.js';
 import { SessionStorageService as SalesforceSessionStorageService } from './services/salesforce/sessionStorage.js';
-import { AuthService as SlackAuthService } from './services/slack/auth.js';
-import { SessionStorageService as SlackSessionStorageService } from './services/slack/sessionStorage.js';
 import { LinkedInAuthService } from './services/linkedin/auth.js';
 import { LinkedInSessionStorageService } from './services/linkedin/sessionStorage.js';
 import { NavigationService } from './services/salesforce/navigation.js';
@@ -17,7 +15,7 @@ import { ClaudeClient } from './services/claude/client.js';
 import { ParserService } from './services/claude/parser.js';
 import { IntentParserService } from './services/claude/intentParser.js';
 import { StageGateValidator } from './services/validation/stageGates.js';
-import { SalesforceCookies, SlackCookies } from './types/cookies.js';
+import { SalesforceCookies } from './types/cookies.js';
 import { OpportunityState } from './types/opportunity.js';
 import { ClaudeExtraction } from './types/updates.js';
 import { ParsedIntent } from './types/intent.js';
@@ -38,11 +36,8 @@ type Screen =
   | 'salesforce-authenticating'
   | 'salesforce-manual-cookie-input'
   | 'salesforce-authenticated'
-  | 'slack-authenticating'
-  | 'slack-authenticated'
   | 'linkedin-authenticating'
   | 'linkedin-authenticated'
-  | 'finding-paul'
   | 'intent-input'
   | 'parsing-intent'
   | 'searching'
@@ -80,10 +75,6 @@ export default function App({ apiKey }: AppProps) {
   const [search] = useState(() => new SearchService(browser));
   const [updater] = useState(() => new FieldUpdaterService(browser));
 
-  // Slack services
-  const [slackSessionStorage] = useState(() => new SlackSessionStorageService('.slack-session.json'));
-  const [slackAuth] = useState(() => new SlackAuthService(browser, slackSessionStorage));
-
   // LinkedIn services
   const [linkedInSessionStorage] = useState(() => new LinkedInSessionStorageService('.linkedin-session.json'));
   const [linkedInAuth] = useState(() => new LinkedInAuthService(browser, linkedInSessionStorage));
@@ -97,9 +88,8 @@ export default function App({ apiKey }: AppProps) {
   const [validator] = useState(() => new StageGateValidator());
 
   // State
-  const [workflow, setWorkflow] = useState<'prospecting' | 'salesforce' | 'slack' | null>(null);
+  const [workflow, setWorkflow] = useState<'prospecting' | 'salesforce' | null>(null);
   const [salesforceCookies, setSalesforceCookies] = useState<SalesforceCookies | null>(null);
-  const [slackCookies, setSlackCookies] = useState<SlackCookies | null>(null);
   const [intent, setIntent] = useState<ParsedIntent | null>(null);
   const [searchResults, setSearchResults] = useState<OpportunitySearchResult[]>([]);
   const [oppState, setOppState] = useState<OpportunityState | null>(null);
@@ -197,77 +187,6 @@ export default function App({ apiKey }: AppProps) {
     } catch (err: any) {
       logger.error('Salesforce authentication failed', err);
       setError(err.message || 'Authentication failed');
-      setScreen('error');
-    }
-  };
-
-  // Slack workflow handlers
-  const handleSlackAuth = async () => {
-    setScreen('slack-authenticating');
-    setMessage('Checking for saved Slack session...');
-
-    try {
-      const sessionValid = await slackAuth.authenticateWithSavedSession();
-
-      if (sessionValid) {
-        const validCookies = slackAuth.getCookies();
-        if (validCookies) {
-          setSlackCookies(validCookies);
-          setScreen('slack-authenticated');
-          setMessage('Successfully authenticated with saved session!');
-          return;
-        }
-      }
-
-      setMessage('Opening browser for Slack authentication...');
-      const extractedCookies = await slackAuth.waitForAuthenticationAndExtractCookies();
-      setSlackCookies(extractedCookies);
-      setScreen('slack-authenticated');
-      setMessage('Successfully authenticated to Slack!');
-    } catch (err: any) {
-      logger.error('Slack authentication failed', err);
-      setError(err.message || 'Authentication failed');
-      setScreen('error');
-    }
-  };
-
-  const handleFindAndClickPaul = async () => {
-    setScreen('finding-paul');
-    setMessage('Taking snapshot to find paul-d0...');
-
-    try {
-      const snapshot = await browser.getSnapshot();
-      logger.info('Snapshot retrieved', { refCount: Object.keys(snapshot.data.refs).length });
-
-      let foundRef: string | null = null;
-      for (const [ref, element] of Object.entries(snapshot.data.refs)) {
-        const name = (element as any).name?.toString().toLowerCase() || '';
-        const text = (element as any).text?.toString().toLowerCase() || '';
-
-        if (name.includes('paul-d0') || text.includes('paul-d0')) {
-          foundRef = ref;
-          logger.info('Found paul-d0', { ref, name, text });
-          break;
-        }
-      }
-
-      if (!foundRef) {
-        setError('Could not find paul-d0 element on the page');
-        setScreen('error');
-        return;
-      }
-
-      setMessage('Found paul-d0! Clicking...');
-      await browser.wait(500);
-      await browser.clickElement(`@${foundRef}`);
-      await browser.wait(1000);
-
-      setScreen('success');
-      setMessage('Successfully clicked on paul-d0!');
-      setTimeout(() => process.exit(0), 3000);
-    } catch (err: any) {
-      logger.error('Failed to find or click paul-d0', err);
-      setError(err.message || 'Failed to find or click paul-d0');
       setScreen('error');
     }
   };
@@ -514,14 +433,12 @@ export default function App({ apiKey }: AppProps) {
   };
 
   // Main menu selection
-  const handleMainMenuSelect = (option: 'prospecting' | 'salesforce' | 'slack') => {
+  const handleMainMenuSelect = (option: 'prospecting' | 'salesforce') => {
     setWorkflow(option);
     if (option === 'prospecting') {
       handleLinkedInAuth();
     } else if (option === 'salesforce') {
       handleSalesforceAuth();
-    } else if (option === 'slack') {
-      handleSlackAuth();
     }
   };
 
@@ -530,7 +447,6 @@ export default function App({ apiKey }: AppProps) {
     if (screen === 'welcome') {
       if (input === 'c' || input === 'C') {
         salesforceAuth.clearSavedSession();
-        slackAuth.clearSavedSession();
         linkedInAuth.clearSavedSession();
         setMessage('Saved sessions cleared. Press any key to continue...');
       } else {
@@ -538,8 +454,6 @@ export default function App({ apiKey }: AppProps) {
       }
     } else if (screen === 'salesforce-authenticated') {
       setScreen('intent-input');
-    } else if (screen === 'slack-authenticated') {
-      handleFindAndClickPaul();
     } else if (screen === 'linkedin-authenticated') {
       setScreen('prospect-criteria-input');
     } else if (screen === 'preview' && !extraction?.missingFields?.length) {
@@ -588,7 +502,7 @@ export default function App({ apiKey }: AppProps) {
     return <MainMenu onSelect={handleMainMenuSelect} />;
   }
 
-  if (screen === 'salesforce-authenticating' || screen === 'slack-authenticating' || screen === 'linkedin-authenticating') {
+  if (screen === 'salesforce-authenticating' || screen === 'linkedin-authenticating') {
     return (
       <Box flexDirection="column" padding={1}>
         <Text color="cyan">{message}</Text>
@@ -622,20 +536,6 @@ export default function App({ apiKey }: AppProps) {
     );
   }
 
-  if (screen === 'slack-authenticated') {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold color="green">Slack Authentication Successful!</Text>
-        <Box marginTop={1}>
-          <Text>{message}</Text>
-        </Box>
-        <Box marginTop={2}>
-          <Text color="yellow">Press any key to find and click paul-d0...</Text>
-        </Box>
-      </Box>
-    );
-  }
-
   if (screen === 'linkedin-authenticated') {
     return (
       <Box flexDirection="column" padding={1}>
@@ -650,7 +550,7 @@ export default function App({ apiKey }: AppProps) {
     );
   }
 
-  if (screen === 'finding-paul' || screen === 'parsing-intent' || screen === 'searching' || screen === 'loading-opp' || screen === 'processing' || screen === 'updating' || screen === 'prospect-searching') {
+  if (screen === 'parsing-intent' || screen === 'searching' || screen === 'loading-opp' || screen === 'processing' || screen === 'updating' || screen === 'prospect-searching') {
     return (
       <Box flexDirection="column" padding={1}>
         <Text color="cyan">{message}</Text>
