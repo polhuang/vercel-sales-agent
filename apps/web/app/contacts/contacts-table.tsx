@@ -11,6 +11,7 @@ import { Button } from "@sales-agent/ui/components/primitives/button";
 import { Plus } from "lucide-react";
 import { updateRecord } from "../actions/records";
 import { RecordDetailPanel } from "../components/record-detail-panel";
+import { CreateRecordDialog } from "../components/create-record-dialog";
 import type { ColumnInfo } from "@sales-agent/ui/components/data-table/column-visibility-dropdown";
 
 const columnHelper = createColumnHelper<Contact>();
@@ -83,12 +84,27 @@ const EDITABLE_COLUMNS = [
   "role",
 ];
 
+const CREATE_FIELDS = [
+  { key: "firstName", label: "First Name", placeholder: "First name" },
+  { key: "lastName", label: "Last Name", required: true, placeholder: "Last name" },
+  { key: "email", label: "Email", placeholder: "email@example.com" },
+  { key: "phone", label: "Phone", placeholder: "+1..." },
+  { key: "title", label: "Title", placeholder: "e.g. VP Engineering" },
+  {
+    key: "role",
+    label: "Role",
+    type: "select" as const,
+    options: ROLE_OPTIONS,
+  },
+];
+
 interface ContactsTableProps {
   data: Contact[];
 }
 
 export function ContactsTable({ data }: ContactsTableProps) {
   const [localData, setLocalData] = React.useState(data);
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   React.useEffect(() => {
     setLocalData(data);
@@ -155,7 +171,7 @@ export function ContactsTable({ data }: ContactsTableProps) {
         columnFilters={columnFilters}
         onColumnFiltersChange={setColumnFilters}
         actions={
-          <Button size="sm">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus size={14} className="mr-1.5" />
             New
           </Button>
@@ -184,6 +200,13 @@ export function ContactsTable({ data }: ContactsTableProps) {
         recordId={detailPanelRecordId}
         open={detailPanelOpen}
         onClose={closeDetailPanel}
+      />
+      <CreateRecordDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        entityType="contact"
+        title="New Contact"
+        fields={CREATE_FIELDS}
       />
     </div>
   );

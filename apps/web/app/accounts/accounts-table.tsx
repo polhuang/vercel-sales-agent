@@ -11,6 +11,7 @@ import { Button } from "@sales-agent/ui/components/primitives/button";
 import { Plus } from "lucide-react";
 import { updateRecord } from "../actions/records";
 import { RecordDetailPanel } from "../components/record-detail-panel";
+import { CreateRecordDialog } from "../components/create-record-dialog";
 import type { ColumnInfo } from "@sales-agent/ui/components/data-table/column-visibility-dropdown";
 
 const columnHelper = createColumnHelper<Account>();
@@ -90,12 +91,22 @@ const EDITABLE_COLUMNS = [
   "billingState",
 ];
 
+const CREATE_FIELDS = [
+  { key: "name", label: "Name", required: true, placeholder: "Account name" },
+  { key: "industry", label: "Industry", placeholder: "e.g. Technology" },
+  { key: "website", label: "Website", placeholder: "https://..." },
+  { key: "owner", label: "Owner", placeholder: "Owner name" },
+  { key: "billingCity", label: "City", placeholder: "City" },
+  { key: "billingState", label: "State", placeholder: "State" },
+];
+
 interface AccountsTableProps {
   data: Account[];
 }
 
 export function AccountsTable({ data }: AccountsTableProps) {
   const [localData, setLocalData] = React.useState(data);
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   React.useEffect(() => {
     setLocalData(data);
@@ -162,7 +173,7 @@ export function AccountsTable({ data }: AccountsTableProps) {
         columnFilters={columnFilters}
         onColumnFiltersChange={setColumnFilters}
         actions={
-          <Button size="sm">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus size={14} className="mr-1.5" />
             New
           </Button>
@@ -191,6 +202,13 @@ export function AccountsTable({ data }: AccountsTableProps) {
         recordId={detailPanelRecordId}
         open={detailPanelOpen}
         onClose={closeDetailPanel}
+      />
+      <CreateRecordDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        entityType="account"
+        title="New Account"
+        fields={CREATE_FIELDS}
       />
     </div>
   );

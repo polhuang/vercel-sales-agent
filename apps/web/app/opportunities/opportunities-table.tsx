@@ -12,6 +12,7 @@ import { Button } from "@sales-agent/ui/components/primitives/button";
 import { Plus } from "lucide-react";
 import { updateRecord } from "../actions/records";
 import { RecordDetailPanel } from "../components/record-detail-panel";
+import { CreateRecordDialog } from "../components/create-record-dialog";
 import { useStageGate } from "@sales-agent/ui/hooks/use-stage-gate";
 import { getMissingFields } from "../../../../config/stage-gates";
 import type { ColumnInfo } from "@sales-agent/ui/components/data-table/column-visibility-dropdown";
@@ -116,8 +117,22 @@ interface OpportunitiesTableProps {
   data: Opportunity[];
 }
 
+const CREATE_FIELDS = [
+  { key: "name", label: "Name", required: true, placeholder: "Opportunity name" },
+  {
+    key: "stage",
+    label: "Stage",
+    type: "select" as const,
+    options: STAGE_OPTIONS,
+  },
+  { key: "amount", label: "Amount", type: "number" as const, placeholder: "0" },
+  { key: "closeDate", label: "Close Date", placeholder: "YYYY-MM-DD" },
+  { key: "owner", label: "Owner", placeholder: "Owner name" },
+];
+
 export function OpportunitiesTable({ data }: OpportunitiesTableProps) {
   const [localData, setLocalData] = React.useState(data);
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   // Sync with server data when it changes (e.g. after revalidation)
   React.useEffect(() => {
@@ -201,7 +216,7 @@ export function OpportunitiesTable({ data }: OpportunitiesTableProps) {
         columnFilters={columnFilters}
         onColumnFiltersChange={setColumnFilters}
         actions={
-          <Button size="sm">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus size={14} className="mr-1.5" />
             New
           </Button>
@@ -231,6 +246,13 @@ export function OpportunitiesTable({ data }: OpportunitiesTableProps) {
         recordId={detailPanelRecordId}
         open={detailPanelOpen}
         onClose={closeDetailPanel}
+      />
+      <CreateRecordDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        entityType="opportunity"
+        title="New Opportunity"
+        fields={CREATE_FIELDS}
       />
     </div>
   );
