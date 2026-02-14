@@ -1,0 +1,25 @@
+{
+  "name": "@sales-agent/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.0",
+    "drizzle-orm": "^0.39.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.8.0"
+  }
+}
