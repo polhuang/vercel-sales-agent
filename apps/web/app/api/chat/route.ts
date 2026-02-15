@@ -6,8 +6,13 @@ import {
   contacts,
   changeLog,
   updateFieldWithLog,
+  campaigns,
+  campaignSteps,
+  campaignEnrollments,
+  campaignEvents,
 } from "@sales-agent/db";
-import { like, or, eq, desc, and } from "drizzle-orm";
+import { like, or, eq, desc, and, count, asc, sql } from "drizzle-orm";
+import { ulid } from "ulid";
 import { getMissingFields } from "../../../../../config/stage-gates";
 
 const tools: Anthropic.Tool[] = [
@@ -90,6 +95,51 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ["entity_type", "entity_id"],
+    },
+  },
+  {
+    name: "list_campaigns",
+    description: "List all email campaigns with their status and basic stats",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "get_campaign_details",
+    description:
+      "Get detailed campaign info including steps, enrollments and stats",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "Campaign ID" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "enroll_contact_in_campaign",
+    description:
+      "Enroll a contact in a campaign. Always confirm with the user first.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        campaign_id: { type: "string", description: "Campaign ID" },
+        contact_id: { type: "string", description: "Contact ID" },
+      },
+      required: ["campaign_id", "contact_id"],
+    },
+  },
+  {
+    name: "get_campaign_stats",
+    description:
+      "Get performance analytics for a campaign (sent, opens, clicks, replies, rates)",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        campaign_id: { type: "string", description: "Campaign ID" },
+      },
+      required: ["campaign_id"],
     },
   },
 ];
@@ -303,6 +353,209 @@ async function executeTool(
       );
     }
 
+    case "list_campaigns": {
+      const allCampaigns = await db
+        .select()
+        .from(campaigns)
+        .orderBy(desc(campaigns.updatedAt));
+
+      const result = await Promise.all(
+        allCampaigns.map(async (c) => {
+          const [enrollCount] = await db
+            .select({ count: count() })
+            .from(campaignEnrollments)
+            .where(eq(campaignEnrollments.campaignId, c.id));
+          const [stepCount] = await db
+            .select({ count: count() })
+            .from(campaignSteps)
+            .where(eq(campaignSteps.campaignId, c.id));
+          return {
+            id: c.id,
+            name: c.name,
+            status: c.status,
+            steps: stepCount?.count ?? 0,
+            enrolled: enrollCount?.count ?? 0,
+          };
+        })
+      );
+      return JSON.stringify(
+        result.length > 0 ? result : { message: "No campaigns found" }
+      );
+    }
+
+    case "get_campaign_details": {
+      const id = input.id as string;
+      const [campaign] = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, id))
+        .limit(1);
+      if (!campaign) return JSON.stringify({ error: "Campaign not found" });
+
+      const steps = await db
+        .select()
+        .from(campaignSteps)
+        .where(eq(campaignSteps.campaignId, id))
+        .orderBy(asc(campaignSteps.stepNumber));
+
+      const enrollments = await db
+        .select({
+          id: campaignEnrollments.id,
+          contactId: campaignEnrollments.contactId,
+          status: campaignEnrollments.status,
+          contactFirstName: contacts.firstName,
+          contactLastName: contacts.lastName,
+          contactEmail: contacts.email,
+        })
+        .from(campaignEnrollments)
+        .innerJoin(contacts, eq(campaignEnrollments.contactId, contacts.id))
+        .where(eq(campaignEnrollments.campaignId, id));
+
+      return JSON.stringify({
+        ...campaign,
+        steps: steps.map((s) => ({
+          stepNumber: s.stepNumber,
+          type: s.type,
+          subject: s.subject,
+          waitDays: s.waitDays,
+        })),
+        enrollments: enrollments.map((e) => ({
+          contactName: `${e.contactFirstName} ${e.contactLastName}`,
+          email: e.contactEmail,
+          status: e.status,
+        })),
+      });
+    }
+
+    case "enroll_contact_in_campaign": {
+      const campaignId = input.campaign_id as string;
+      const contactId = input.contact_id as string;
+
+      const [campaign] = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .limit(1);
+      if (!campaign) return JSON.stringify({ error: "Campaign not found" });
+
+      const [contact] = await db
+        .select()
+        .from(contacts)
+        .where(eq(contacts.id, contactId))
+        .limit(1);
+      if (!contact) return JSON.stringify({ error: "Contact not found" });
+
+      // Check if already enrolled
+      const [existing] = await db
+        .select()
+        .from(campaignEnrollments)
+        .where(
+          and(
+            eq(campaignEnrollments.campaignId, campaignId),
+            eq(campaignEnrollments.contactId, contactId),
+            eq(campaignEnrollments.status, "active")
+          )
+        )
+        .limit(1);
+
+      if (existing)
+        return JSON.stringify({ message: "Contact is already enrolled" });
+
+      const [firstStep] = await db
+        .select()
+        .from(campaignSteps)
+        .where(eq(campaignSteps.campaignId, campaignId))
+        .orderBy(asc(campaignSteps.stepNumber))
+        .limit(1);
+
+      const now = new Date().toISOString();
+      const enrollmentId = ulid();
+      await db.insert(campaignEnrollments).values({
+        id: enrollmentId,
+        campaignId,
+        contactId,
+        currentStepId: firstStep?.id ?? null,
+        status: "active",
+        nextSendAt: now,
+        enrolledAt: now,
+      });
+
+      return JSON.stringify({
+        success: true,
+        enrollmentId,
+        contact: `${contact.firstName} ${contact.lastName}`,
+        campaign: campaign.name,
+      });
+    }
+
+    case "get_campaign_stats": {
+      const campaignId = input.campaign_id as string;
+
+      const [campaign] = await db
+        .select()
+        .from(campaigns)
+        .where(eq(campaigns.id, campaignId))
+        .limit(1);
+      if (!campaign) return JSON.stringify({ error: "Campaign not found" });
+
+      const enrollments = await db
+        .select({ id: campaignEnrollments.id })
+        .from(campaignEnrollments)
+        .where(eq(campaignEnrollments.campaignId, campaignId));
+
+      if (enrollments.length === 0) {
+        return JSON.stringify({
+          campaign: campaign.name,
+          sent: 0,
+          opens: 0,
+          clicks: 0,
+          replies: 0,
+          bounces: 0,
+          message: "No enrollments yet",
+        });
+      }
+
+      const enrollmentIds = enrollments.map((e) => e.id);
+      const events = await db
+        .select({
+          type: campaignEvents.type,
+          count: count(),
+        })
+        .from(campaignEvents)
+        .where(
+          sql`${campaignEvents.enrollmentId} IN (${sql.join(
+            enrollmentIds.map((id) => sql`${id}`),
+            sql`, `
+          )})`
+        )
+        .groupBy(campaignEvents.type);
+
+      const eventMap = Object.fromEntries(
+        events.map((e) => [e.type, e.count])
+      );
+
+      const sent = eventMap.sent ?? 0;
+      const opens = eventMap.opened ?? 0;
+      const clicks = eventMap.clicked ?? 0;
+      const replies = eventMap.replied ?? 0;
+      const bounces = eventMap.bounced ?? 0;
+
+      return JSON.stringify({
+        campaign: campaign.name,
+        sent,
+        opens,
+        clicks,
+        replies,
+        bounces,
+        openRate: sent > 0 ? `${Math.round((opens / sent) * 100)}%` : "0%",
+        clickRate: sent > 0 ? `${Math.round((clicks / sent) * 100)}%` : "0%",
+        replyRate:
+          sent > 0 ? `${Math.round((replies / sent) * 100)}%` : "0%",
+        bounceRate:
+          sent > 0 ? `${Math.round((bounces / sent) * 100)}%` : "0%",
+      });
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -339,16 +592,17 @@ export async function POST(request: Request) {
           const response = await client.messages.create({
             model: "claude-sonnet-4-5-20250929",
             max_tokens: 4096,
-            system: `You are a helpful CRM assistant for a B2B sales team. You help sales reps manage their pipeline, update records, check deal progress, and analyze data.
+            system: `You are a helpful CRM assistant for a B2B sales team. You help sales reps manage their pipeline, update records, check deal progress, analyze data, and manage email campaigns.
 
-You have tools to search records, view details, update fields, check stage-gate requirements, and view change history.
+You have tools to search records, view details, update fields, check stage-gate requirements, view change history, and manage email campaigns (list, view details, enroll contacts, get stats).
 
 Guidelines:
 - Be concise and actionable
 - When updating fields, confirm what you changed
 - When searching, summarize results clearly
 - Use tools proactively to answer questions about the pipeline
-- Format amounts as currency and dates readably`,
+- Format amounts as currency and dates readably
+- For campaigns, proactively share stats when asked about campaign performance`,
             tools,
             messages: anthropicMessages,
           });

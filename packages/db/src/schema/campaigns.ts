@@ -39,6 +39,8 @@ export const campaignEnrollments = sqliteTable("campaign_enrollments", {
   }).default("active"),
   nextSendAt: text("next_send_at"),
   enrolledAt: text("enrolled_at").notNull(),
+  threadId: text("thread_id"),
+  gmailMessageId: text("gmail_message_id"),
 });
 
 export const campaignEvents = sqliteTable("campaign_events", {

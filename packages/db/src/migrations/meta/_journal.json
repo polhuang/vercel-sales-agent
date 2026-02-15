@@ -8,6 +8,13 @@
       "when": 1771081030230,
       "tag": "0000_shiny_blindfold",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771137095055,
+      "tag": "0001_melted_lizard",
+      "breakpoints": true
     }
   ]
 }
