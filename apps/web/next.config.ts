@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/*": ["../../packages/db/src/migrations/**/*"],
+  },
   transpilePackages: ["@sales-agent/ui", "@sales-agent/db"],
   serverExternalPackages: [
     "@libsql/client",
